@@ -95,11 +95,16 @@ func (data IssueData) GetCreatedAt() time.Time {
 	return data.CreatedAt
 }
 
-func makeIssuesQuery(query string) string {
-	return fmt.Sprintf("is:issue archived:false %s sort:updated", query)
+func makeIssuesQuery(query string, sort SearchSort) string {
+	return MakeSearchQuery("is:issue", query, sort)
 }
 
-func FetchIssues(query string, limit int, pageInfo *PageInfo) (IssuesResponse, error) {
+func FetchIssues(
+	query string,
+	sort SearchSort,
+	limit int,
+	pageInfo *PageInfo,
+) (IssuesResponse, error) {
 	var err error
 	if client == nil {
 		client, err = gh.DefaultGraphQLClient()
@@ -123,7 +128,7 @@ func FetchIssues(query string, limit int, pageInfo *PageInfo) (IssuesResponse, e
 		endCursor = &pageInfo.EndCursor
 	}
 	variables := map[string]any{
-		"query":     graphql.String(makeIssuesQuery(query)),
+		"query":     graphql.String(makeIssuesQuery(query, sort)),
 		"limit":     graphql.Int(limit),
 		"endCursor": (*graphql.String)(endCursor),
 	}

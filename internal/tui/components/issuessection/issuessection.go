@@ -49,6 +49,7 @@ func NewModel(
 		},
 	)
 	m.Issues = []data.IssueData{}
+	m.updateSortHeader()
 
 	return m
 }
@@ -119,6 +120,13 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				m.ResetRows()
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
 			}
+
+		case key.Matches(msg, keys.IssueKeys.SortOrder):
+			m.ToggleSortOrder()
+			m.updateSortHeader()
+			m.sortIssues()
+			m.Table.SetRows(m.BuildRows())
+			return m, nil
 		}
 
 	case tasks.UpdateIssueMsg:
@@ -146,6 +154,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 						currIssue.Assignees.Nodes, msg.RemovedAssignees.Nodes)
 				}
 				m.Issues[i] = currIssue
+				m.sortIssues()
 				m.SetIsLoading(false)
 				m.Table.SetRows(m.BuildRows())
 				break
@@ -159,6 +168,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			} else {
 				m.Issues = msg.Issues
 			}
+			m.sortIssues()
 			m.TotalCount = msg.TotalCount
 			m.SetIsLoading(false)
 			m.PageInfo = &msg.PageInfo
@@ -275,6 +285,20 @@ func (m Model) BuildRows() []table.Row {
 	return rows
 }
 
+func (m *Model) sortIssues() {
+	sortOrder := m.GetSortOrder()
+	slices.SortFunc(m.Issues, func(a, b data.IssueData) int {
+		if sortOrder == data.SearchSortCreated {
+			return b.CreatedAt.Compare(a.CreatedAt)
+		}
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
+}
+
+func (m *Model) updateSortHeader() {
+	m.SetColumnTitle(2, fmt.Sprintf("Title (%s)", m.SortOrderLabel()))
+}
+
 func (m *Model) NumRows() int {
 	return len(m.Issues)
 }
@@ -323,7 +347,7 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 		if limit == nil {
 			limit = &m.Ctx.Config.Defaults.IssuesLimit
 		}
-		res, err := data.FetchIssues(m.GetFilters(), *limit, m.PageInfo)
+		res, err := data.FetchIssues(m.GetFilters(), data.SearchSortUpdated, *limit, m.PageInfo)
 		if err != nil {
 			return constants.TaskFinishedMsg{
 				SectionId:   m.Id,

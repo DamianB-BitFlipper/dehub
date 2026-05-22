@@ -18,6 +18,7 @@ type IssueKeyMap struct {
 	Close                key.Binding
 	Reopen               key.Binding
 	ToggleSmartFiltering key.Binding
+	SortOrder            key.Binding
 	ViewPRs              key.Binding
 }
 
@@ -54,6 +55,10 @@ var IssueKeys = IssueKeyMap{
 		key.WithKeys("t"),
 		key.WithHelp("t", "toggle smart filtering"),
 	),
+	SortOrder: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "sort order"),
+	),
 	ViewPRs: key.NewBinding(
 		key.WithHelp("", "switch to notifications"),
 	),
@@ -69,6 +74,7 @@ func IssueFullHelp() []key.Binding {
 		IssueKeys.Close,
 		IssueKeys.Reopen,
 		IssueKeys.ToggleSmartFiltering,
+		IssueKeys.SortOrder,
 		IssueKeys.ViewPRs,
 	)
 }
@@ -114,6 +120,8 @@ func rebindIssueKeys(keys []config.Keybinding) error {
 			key = &IssueKeys.Close
 		case "reopen":
 			key = &IssueKeys.Reopen
+		case "sortOrder":
+			key = &IssueKeys.SortOrder
 		case "viewPrs":
 			key = &IssueKeys.ViewPRs
 		default:

@@ -50,6 +50,7 @@ type BaseModel struct {
 	ShowAuthorIcon            bool
 	IsFilteredByCurrentRemote bool
 	IsLoading                 bool
+	SortOrder                 data.SearchSort
 }
 
 type NewSectionOptions struct {
@@ -119,6 +120,7 @@ func NewModel(
 		PageInfo:                  nil,
 		PromptConfirmationBox:     prompt.NewModel(ctx),
 		ShowAuthorIcon:            ctx.Config.ShowAuthorIcons,
+		SortOrder:                 data.SearchSortUpdated,
 	}
 	m.Table = table.NewModel(
 		*ctx,
@@ -374,6 +376,38 @@ func (m *BaseModel) ViewCompletions() string {
 
 func (m *BaseModel) ResetPageInfo() {
 	m.PageInfo = nil
+}
+
+func (m *BaseModel) ToggleSortOrder() data.SearchSort {
+	if m.SortOrder == data.SearchSortUpdated || m.SortOrder == "" {
+		m.SortOrder = data.SearchSortCreated
+	} else {
+		m.SortOrder = data.SearchSortUpdated
+	}
+	return m.SortOrder
+}
+
+func (m *BaseModel) GetSortOrder() data.SearchSort {
+	if m.SortOrder == "" {
+		return data.SearchSortUpdated
+	}
+	return m.SortOrder
+}
+
+func (m *BaseModel) SortOrderLabel() string {
+	if m.GetSortOrder() == data.SearchSortCreated {
+		return "Newest created"
+	}
+	return "Recently updated"
+}
+
+func (m *BaseModel) SetColumnTitle(index int, title string) {
+	if index >= 0 && index < len(m.Columns) {
+		m.Columns[index].Title = title
+	}
+	if index >= 0 && index < len(m.Table.Columns) {
+		m.Table.Columns[index].Title = title
+	}
 }
 
 func (m *BaseModel) IsPromptConfirmationFocused() bool {

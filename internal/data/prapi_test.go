@@ -78,3 +78,21 @@ func TestSetClient(t *testing.T) {
 		require.True(t, IsEnrichmentCacheCleared())
 	})
 }
+
+func TestMakePullRequestsQuerySorts(t *testing.T) {
+	require.Equal(
+		t,
+		"is:pr archived:false author:@me sort:updated-desc",
+		makePullRequestsQuery("author:@me", SearchSortUpdated),
+	)
+	require.Equal(
+		t,
+		"is:pr archived:false author:@me sort:created-desc",
+		makePullRequestsQuery("author:@me", SearchSortCreated),
+	)
+	require.Equal(
+		t,
+		"is:pr archived:false author:@me sort:created-desc",
+		makePullRequestsQuery("author:@me sort:updated", SearchSortCreated),
+	)
+}

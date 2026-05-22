@@ -462,8 +462,8 @@ func (e EnrichedPullRequestData) ToPullRequestData() PullRequestData {
 	}
 }
 
-func makePullRequestsQuery(query string) string {
-	return fmt.Sprintf("is:pr archived:false %s sort:updated", query)
+func makePullRequestsQuery(query string, sort SearchSort) string {
+	return MakeSearchQuery("is:pr", query, sort)
 }
 
 type PullRequestsResponse struct {
@@ -494,7 +494,12 @@ func IsEnrichmentCacheCleared() bool {
 	return cachedClient == nil
 }
 
-func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequestsResponse, error) {
+func FetchPullRequests(
+	query string,
+	sort SearchSort,
+	limit int,
+	pageInfo *PageInfo,
+) (PullRequestsResponse, error) {
 	var err error
 	if client == nil {
 		if config.IsFeatureEnabled(config.FF_MOCK_DATA) {
@@ -528,7 +533,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 		endCursor = &pageInfo.EndCursor
 	}
 	variables := map[string]any{
-		"query":     graphql.String(makePullRequestsQuery(query)),
+		"query":     graphql.String(makePullRequestsQuery(query, sort)),
 		"limit":     graphql.Int(limit),
 		"endCursor": (*graphql.String)(endCursor),
 	}

@@ -62,8 +62,8 @@ properties:
 
         For global actions, the available builtin commands are: `up`, `down`, `firstLine`, `lastLine`, `cyclePreview`, `openGithub`, `refresh`, `refreshAll`, `pageDown`, `pageUp`, `nextView`, `prevView`, `nextSection`, `prevSection`, `search`, `copyurl`, `copyNumber`, `help`, `quit`.
 
-        For PRs, the available builtin commands are: `prevSidebarTab`, `nextSidebarTab`, `approve`, `assign`, `unassign`, `comment`, `diff`, `checkout`, `close`, `ready`, `reopen`, `merge`, `update`, `createPr`, `viewIssues`, `summaryViewMore`.
+        For PRs, the available builtin commands are: `prevSidebarTab`, `nextSidebarTab`, `approve`, `assign`, `unassign`, `comment`, `diff`, `checkout`, `close`, `ready`, `reopen`, `merge`, `update`, `createPr`, `sortOrder`, `viewIssues`, `summaryViewMore`.
 
-        For Issues, the available builtin commands are: `assign`, `unassign`, `comment`, `close`, `reopen`, `viewPrs`.
+        For Issues, the available builtin commands are: `assign`, `unassign`, `comment`, `close`, `reopen`, `sortOrder`, `viewPrs`.
 
         [sref:`key`]: keybindings.entry.key

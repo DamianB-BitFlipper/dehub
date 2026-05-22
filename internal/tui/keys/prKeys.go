@@ -29,6 +29,7 @@ type PRKeyMap struct {
 	Update               key.Binding
 	ApproveWorkflows     key.Binding
 	ToggleSmartFiltering key.Binding
+	SortOrder            key.Binding
 	ViewIssues           key.Binding
 }
 
@@ -109,6 +110,10 @@ var PRKeys = PRKeyMap{
 		key.WithKeys("t"),
 		key.WithHelp("t", "toggle smart filtering"),
 	),
+	SortOrder: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "sort order"),
+	),
 	ViewIssues: key.NewBinding(
 		key.WithHelp("", "switch to issues"),
 	),
@@ -134,6 +139,7 @@ func PRFullHelp() []key.Binding {
 		PRKeys.Update,
 		PRKeys.ApproveWorkflows,
 		PRKeys.ToggleSmartFiltering,
+		PRKeys.SortOrder,
 		PRKeys.ViewIssues,
 	)
 }
@@ -199,6 +205,8 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.Update
 		case "approveWorkflows":
 			key = &PRKeys.ApproveWorkflows
+		case "sortOrder":
+			key = &PRKeys.SortOrder
 		case "viewIssues":
 			key = &PRKeys.ViewIssues
 		case "summaryViewMore":

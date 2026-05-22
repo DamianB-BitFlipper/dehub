@@ -2,6 +2,7 @@ package prssection
 
 import (
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
@@ -57,6 +58,27 @@ func TestCreatePRBranchesFetchedIgnoresStaleResult(t *testing.T) {
 	require.True(t, m.CreatePRForm.BranchesLoading())
 	require.Empty(t, m.CreatePRForm.Head())
 	require.Empty(t, m.CreatePRForm.Base())
+}
+
+func TestSortPRsUsesLoadedRows(t *testing.T) {
+	oldCreated := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newCreated := oldCreated.Add(time.Hour)
+	oldUpdated := oldCreated.Add(2 * time.Hour)
+	newUpdated := oldCreated.Add(3 * time.Hour)
+	m := Model{
+		BaseModel: section.BaseModel{SortOrder: data.SearchSortUpdated},
+		Prs: []prrow.Data{
+			{Primary: &data.PullRequestData{Number: 1, CreatedAt: newCreated, UpdatedAt: oldUpdated}},
+			{Primary: &data.PullRequestData{Number: 2, CreatedAt: oldCreated, UpdatedAt: newUpdated}},
+		},
+	}
+
+	m.sortPRs()
+	require.Equal(t, 2, m.Prs[0].Primary.Number)
+
+	m.ToggleSortOrder()
+	m.sortPRs()
+	require.Equal(t, 1, m.Prs[0].Primary.Number)
 }
 
 func TestRepoFromFilters(t *testing.T) {

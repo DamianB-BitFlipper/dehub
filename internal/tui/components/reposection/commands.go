@@ -253,6 +253,7 @@ func (m *Model) fetchPRsCmd() tea.Cmd {
 		}
 		res, err := data.FetchPullRequests(
 			fmt.Sprintf("author:@me repo:%s", git.GetRepoShortName(m.Ctx.RepoUrl)),
+			data.SearchSortUpdated,
 			*limit,
 			nil,
 		)
@@ -291,6 +292,7 @@ func (m *Model) fetchPRCmd(branch string) []tea.Cmd {
 	return []tea.Cmd{startCmd, func() tea.Msg {
 		res, err := data.FetchPullRequests(
 			fmt.Sprintf("author:@me repo:%s head:%s", git.GetRepoShortName(m.Ctx.RepoUrl), branch),
+			data.SearchSortUpdated,
 			1,
 			nil,
 		)

@@ -53,6 +53,7 @@ func NewModel(
 	)
 	m.Prs = []prrow.Data{}
 	m.CreatePRForm = newCreatePRForm(ctx)
+	m.updateSortHeader()
 
 	return m
 }
@@ -187,6 +188,13 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
 			}
 
+		case key.Matches(msg, keys.PRKeys.SortOrder):
+			m.ToggleSortOrder()
+			m.updateSortHeader()
+			m.sortPRs()
+			m.Table.SetRows(m.BuildRows())
+			return m, nil
+
 		case key.Matches(msg, keys.PRKeys.Checkout):
 			cmd, err = m.checkout()
 			if err != nil {
@@ -234,6 +242,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				currPr.Primary.Mergeable = ""
 			}
 			m.Prs[i] = currPr
+			m.sortPRs()
 			m.SetIsLoading(false)
 			m.Table.SetRows(m.BuildRows())
 			break
@@ -246,6 +255,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			} else {
 				m.Prs = msg.Prs
 			}
+			m.sortPRs()
 			m.TotalCount = msg.TotalCount
 			m.PageInfo = &msg.PageInfo
 			m.SetIsLoading(false)
@@ -295,6 +305,27 @@ func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
 		m.Prs[i].IsEnriched = true
 		m.Prs[i].Enriched = data
 	}
+}
+
+func (m *Model) sortPRs() {
+	sortOrder := m.GetSortOrder()
+	slices.SortFunc(m.Prs, func(a, b prrow.Data) int {
+		if a.Primary == nil || b.Primary == nil {
+			return 0
+		}
+		if sortOrder == data.SearchSortCreated {
+			return b.Primary.CreatedAt.Compare(a.Primary.CreatedAt)
+		}
+		return b.Primary.UpdatedAt.Compare(a.Primary.UpdatedAt)
+	})
+}
+
+func (m *Model) updateSortHeader() {
+	titleIndex := 2
+	if m.Ctx != nil && m.Ctx.Config != nil && !m.Ctx.Config.Theme.Ui.Table.Compact {
+		titleIndex = 1
+	}
+	m.SetColumnTitle(titleIndex, fmt.Sprintf("Title (%s)", m.SortOrderLabel()))
 }
 
 func (m *Model) GetPromptConfirmation() string {
@@ -550,7 +581,7 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 			limit = &m.Ctx.Config.Defaults.PrsLimit
 		}
 
-		res, err := data.FetchPullRequests(m.GetFilters(), *limit, m.PageInfo)
+		res, err := data.FetchPullRequests(m.GetFilters(), data.SearchSortUpdated, *limit, m.PageInfo)
 		if err != nil {
 			return constants.TaskFinishedMsg{
 				SectionId:   m.Id,
