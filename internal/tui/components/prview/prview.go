@@ -752,12 +752,27 @@ func (m *Model) GoToFirstTab() {
 	m.carousel.SetCursor(0)
 }
 
+func (m *Model) GoToTab(index int) {
+	m.carousel.SetCursor(index)
+}
+
 func (m *Model) GoToActivityTab() {
 	m.carousel.SetCursor(1) // Activity is the second tab (index 1)
 }
 
+func (m Model) SelectedTabIndex() int {
+	return m.carousel.Cursor()
+}
+
 func (m Model) SelectedTab() string {
 	return m.carousel.SelectedItem()
+}
+
+func (m Model) CurrentPRURL() string {
+	if m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil {
+		return ""
+	}
+	return m.pr.Data.Primary.Url
 }
 
 func (m *Model) SetSummaryViewMore() {

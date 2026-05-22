@@ -358,6 +358,65 @@ func TestNotificationView_PRViewTabNavigation(t *testing.T) {
 		"prView tab should have changed after pressing prev tab key")
 }
 
+func TestPRPreviewTabMemory(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{Config: &cfg, View: config.PRsView}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+	prSection.Prs = []prrow.Data{
+		{Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1")},
+		{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
+	}
+	prSection.Table.SetRows(prSection.BuildRows())
+
+	m := Model{
+		ctx:    ctx,
+		prs:    []section.Section{&prSection},
+		prView: prview.NewModel(ctx),
+	}
+
+	m.prView.SetRow(&prSection.Prs[0])
+	m.prView.GoToActivityTab()
+	m.saveCurrentPRPreviewTab()
+
+	prSection.NextRow()
+	m.prView.SetRow(&prSection.Prs[1])
+	m.restoreCurrentPRPreviewTab()
+	require.Equal(t, 0, m.prView.SelectedTabIndex(),
+		"PRs without saved tab state should default to the overview tab")
+
+	prSection.PrevRow()
+	m.prView.SetRow(&prSection.Prs[0])
+	m.restoreCurrentPRPreviewTab()
+	require.Equal(t, 1, m.prView.SelectedTabIndex(),
+		"returning to a PR should restore its previously selected preview tab")
+}
+
+func testPullRequestData(number int, url string) *data.PullRequestData {
+	pr := &data.PullRequestData{
+		Number:      number,
+		Title:       "test PR",
+		Url:         url,
+		State:       "OPEN",
+		HeadRefName: "feature-branch",
+		BaseRefName: "main",
+		Repository: data.Repository{
+			Name:          "repo",
+			NameWithOwner: "owner/repo",
+			Owner:         data.Owner{Login: "owner"},
+		},
+	}
+	pr.Author.Login = "author"
+	return pr
+}
+
 func TestNotificationView_EnterKeyWorksAfterViewingPR(t *testing.T) {
 	// Test that pressing Enter still works after a PR notification has been viewed.
 	// Previously, once a PR subject was set, Enter would be absorbed by the PR handler

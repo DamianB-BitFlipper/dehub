@@ -62,16 +62,18 @@ type Model struct {
 	ctx              *context.ProgramContext
 	taskSpinner      spinner.Model
 	tasks            map[string]context.Task
+	prPreviewTabs    map[string]int
 	positionOverride string // "" means no override, "right" or "bottom"
 }
 
 func NewModel(location config.Location) Model {
 	taskSpinner := spinner.Model{Spinner: spinner.Dot}
 	m := Model{
-		keys:        keys.Keys,
-		sidebar:     sidebar.NewModel(),
-		taskSpinner: taskSpinner,
-		tasks:       map[string]context.Task{},
+		keys:          keys.Keys,
+		sidebar:       sidebar.NewModel(),
+		taskSpinner:   taskSpinner,
+		tasks:         map[string]context.Task{},
+		prPreviewTabs: map[string]int{},
 	}
 
 	version := "dev"
@@ -1029,14 +1031,45 @@ func (m *Model) markNotificationAsRead(notificationId string) {
 }
 
 func (m *Model) onViewedRowChanged() tea.Cmd {
+	m.saveCurrentPRPreviewTab()
 	m.prView.SetSummaryViewLess()
-	m.prView.GoToFirstTab()
 	sidebarCmd := m.syncSidebar()
+	m.restoreCurrentPRPreviewTab()
 	enrichCmd := m.prView.EnrichCurrRow()
 	m.sidebar.ScrollToTop()
 	m.notificationView.ResetSubject()
 	keys.SetNotificationSubject(keys.NotificationSubjectNone)
 	return tea.Batch(sidebarCmd, enrichCmd)
+}
+
+func (m *Model) saveCurrentPRPreviewTab() {
+	url := m.prView.CurrentPRURL()
+	if url == "" {
+		return
+	}
+	if m.prPreviewTabs == nil {
+		m.prPreviewTabs = map[string]int{}
+	}
+	m.prPreviewTabs[url] = m.prView.SelectedTabIndex()
+}
+
+func (m *Model) restoreCurrentPRPreviewTab() {
+	pr, ok := m.getCurrRowData().(*prrow.Data)
+	if !ok || pr == nil || pr.Primary == nil {
+		return
+	}
+
+	url := pr.Primary.Url
+	if url == "" {
+		return
+	}
+	if tabIndex, ok := m.prPreviewTabs[url]; ok {
+		m.prView.GoToTab(tabIndex)
+		m.syncSidebar()
+		return
+	}
+	m.prView.GoToFirstTab()
+	m.syncSidebar()
 }
 
 func (m *Model) onWindowSizeChanged(msg tea.WindowSizeMsg) {
