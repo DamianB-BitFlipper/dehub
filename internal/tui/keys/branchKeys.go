@@ -55,13 +55,12 @@ var BranchKeys = BranchKeyMap{
 		key.WithHelp("u", "update PR"),
 	),
 	ViewPRs: key.NewBinding(
-		key.WithKeys("s"),
-		key.WithHelp("s", "Switch to PRs"),
+		key.WithHelp("", "Switch to PRs"),
 	),
 }
 
 func BranchFullHelp() []key.Binding {
-	return []key.Binding{
+	return enabledBindings(
 		BranchKeys.Checkout,
 		BranchKeys.FastForward,
 		BranchKeys.Push,
@@ -71,7 +70,7 @@ func BranchFullHelp() []key.Binding {
 		BranchKeys.Delete,
 		BranchKeys.UpdatePr,
 		BranchKeys.ViewPRs,
-	}
+	)
 }
 
 func rebindBranchKeys(keys []config.Keybinding) error {

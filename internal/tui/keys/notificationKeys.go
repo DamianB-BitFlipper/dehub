@@ -66,8 +66,7 @@ var NotificationKeys = NotificationKeyMap{
 		key.WithHelp("S", "sort by repo"),
 	),
 	SwitchToPRs: key.NewBinding(
-		key.WithKeys("s"),
-		key.WithHelp("s", "switch to PRs"),
+		key.WithHelp("", "switch to PRs"),
 	),
 	ToggleSmartFiltering: key.NewBinding(
 		key.WithKeys("t"),
@@ -76,7 +75,7 @@ var NotificationKeys = NotificationKeyMap{
 }
 
 func NotificationFullHelp() []key.Binding {
-	return []key.Binding{
+	return enabledBindings(
 		NotificationKeys.View,
 		NotificationKeys.BackToNotification,
 		NotificationKeys.MarkAsDone,
@@ -89,7 +88,7 @@ func NotificationFullHelp() []key.Binding {
 		NotificationKeys.SortByRepo,
 		NotificationKeys.SwitchToPRs,
 		NotificationKeys.ToggleSmartFiltering,
-	}
+	)
 }
 
 func rebindNotificationKeys(keys []config.Keybinding) error {

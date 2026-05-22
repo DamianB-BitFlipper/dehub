@@ -110,13 +110,12 @@ var PRKeys = PRKeyMap{
 		key.WithHelp("t", "toggle smart filtering"),
 	),
 	ViewIssues: key.NewBinding(
-		key.WithKeys("s"),
-		key.WithHelp("s", "switch to issues"),
+		key.WithHelp("", "switch to issues"),
 	),
 }
 
 func PRFullHelp() []key.Binding {
-	return []key.Binding{
+	return enabledBindings(
 		PRKeys.CopyBranch,
 		PRKeys.PrevSidebarTab,
 		PRKeys.NextSidebarTab,
@@ -136,7 +135,7 @@ func PRFullHelp() []key.Binding {
 		PRKeys.ApproveWorkflows,
 		PRKeys.ToggleSmartFiltering,
 		PRKeys.ViewIssues,
-	}
+	)
 }
 
 func rebindPRKeys(keys []config.Keybinding) error {

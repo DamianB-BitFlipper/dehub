@@ -40,6 +40,8 @@ type KeyMap struct {
 	Redraw       key.Binding
 	PageDown     key.Binding
 	PageUp       key.Binding
+	NextView     key.Binding
+	PrevView     key.Binding
 	NextSection  key.Binding
 	PrevSection  key.Binding
 	Search       key.Binding
@@ -132,6 +134,16 @@ func buildBalancedHelpColumns(keyGroups ...[]key.Binding) [][]key.Binding {
 	return columns
 }
 
+func enabledBindings(bindings ...key.Binding) []key.Binding {
+	enabled := make([]key.Binding, 0, len(bindings))
+	for _, binding := range bindings {
+		if len(binding.Keys()) > 0 {
+			enabled = append(enabled, binding)
+		}
+	}
+	return enabled
+}
+
 func (k KeyMap) NavigationKeys() []key.Binding {
 	return []key.Binding{
 		k.Up,
@@ -142,6 +154,8 @@ func (k KeyMap) NavigationKeys() []key.Binding {
 		k.LastLine,
 		k.PageDown,
 		k.PageUp,
+		k.NextView,
+		k.PrevView,
 	}
 }
 
@@ -201,6 +215,14 @@ var Keys = &KeyMap{
 	PageUp: key.NewBinding(
 		key.WithKeys("ctrl+up"),
 		key.WithHelp("Ctrl+↑", "preview page up"),
+	),
+	NextView: key.NewBinding(
+		key.WithKeys("ctrl+shift+right"),
+		key.WithHelp("Ctrl+Shift+→", "next view"),
+	),
+	PrevView: key.NewBinding(
+		key.WithKeys("ctrl+shift+left"),
+		key.WithHelp("Ctrl+Shift+←", "previous view"),
 	),
 	NextSection: key.NewBinding(
 		key.WithKeys("right"),
@@ -317,6 +339,10 @@ func rebindUniversal(universal []config.Keybinding) error {
 			key = &Keys.PageDown
 		case "pageUp":
 			key = &Keys.PageUp
+		case "nextView":
+			key = &Keys.NextView
+		case "prevView":
+			key = &Keys.PrevView
 		case "nextSection":
 			key = &Keys.NextSection
 		case "prevSection":

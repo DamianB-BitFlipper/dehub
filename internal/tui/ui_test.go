@@ -177,7 +177,7 @@ func TestPromptConfirmation_NilSection(t *testing.T) {
 }
 
 func TestNotificationView_SwitchViewWithSKey(t *testing.T) {
-	// Test that pressing 's' in Notifications view switches to PRs view
+	// Test that forward view navigation switches from Notifications to PRs view
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag: "../config/testdata/test-config.yml",
 	})
@@ -211,6 +211,32 @@ func TestNotificationView_SwitchViewWithSKey(t *testing.T) {
 	m.switchSelectedView()
 	require.Equal(t, config.PRsView, m.ctx.View,
 		"switchSelectedView should set view to PRsView when in NotificationsView")
+}
+
+func TestSwitchSelectedViewBack(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag: "../config/testdata/test-config.yml",
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		View:   config.IssuesView,
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+	m := Model{
+		ctx:    ctx,
+		keys:   keys.Keys,
+		prView: prview.NewModel(ctx),
+		tabs:   tabs.NewModel(ctx),
+	}
+	prSec := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+	m.prs = []section.Section{&prSec}
+
+	m.switchSelectedViewBack()
+
+	require.Equal(t, config.PRsView, m.ctx.View)
 }
 
 func TestMaybeSchedulePRWatch_ActivityTab(t *testing.T) {
@@ -249,7 +275,7 @@ func TestMaybeSchedulePRWatch_OverviewWithoutPendingChecks(t *testing.T) {
 }
 
 func TestNotificationView_SwitchViewWithSKey_WhileViewingPR(t *testing.T) {
-	// Test that pressing 's' when viewing a PR notification switches views
+	// Test that forward view navigation clears PR notification subject state
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag: "../config/testdata/test-config.yml",
 	})
@@ -295,7 +321,7 @@ func TestNotificationView_SwitchViewWithSKey_WhileViewingPR(t *testing.T) {
 }
 
 func TestNotificationView_SwitchViewWithSKey_WhileViewingIssue(t *testing.T) {
-	// Test that pressing 's' when viewing an Issue notification switches views
+	// Test that forward view navigation clears issue notification subject state
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag: "../config/testdata/test-config.yml",
 	})

@@ -182,8 +182,25 @@ func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, Keys.NextSection, "right")
 	requireKeys(t, Keys.PageUp, "ctrl+up")
 	requireKeys(t, Keys.PageDown, "ctrl+down")
+	requireKeys(t, Keys.NextView, "ctrl+shift+right")
+	requireKeys(t, Keys.PrevView, "ctrl+shift+left")
 	requireKeys(t, PRKeys.PrevSidebarTab, "ctrl+left")
 	requireKeys(t, PRKeys.NextSidebarTab, "ctrl+right")
+}
+
+func TestDefaultViewSwitchKeybindingsAreUnbound(t *testing.T) {
+	if len(PRKeys.ViewIssues.Keys()) != 0 {
+		t.Fatalf("expected PR view switch key to be unbound by default, got %v", PRKeys.ViewIssues.Keys())
+	}
+	if len(IssueKeys.ViewPRs.Keys()) != 0 {
+		t.Fatalf("expected issue view switch key to be unbound by default, got %v", IssueKeys.ViewPRs.Keys())
+	}
+	if len(NotificationKeys.SwitchToPRs.Keys()) != 0 {
+		t.Fatalf("expected notification view switch key to be unbound by default, got %v", NotificationKeys.SwitchToPRs.Keys())
+	}
+	if len(BranchKeys.ViewPRs.Keys()) != 0 {
+		t.Fatalf("expected branch view switch key to be unbound by default, got %v", BranchKeys.ViewPRs.Keys())
+	}
 }
 
 func TestFullHelpColumnsAreBalanced(t *testing.T) {

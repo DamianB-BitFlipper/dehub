@@ -238,6 +238,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = m.executeKeybinding(msg.String())
 			return m, cmd
 
+		case key.Matches(msg, m.keys.NextView):
+			cmds = append(cmds, m.switchSelectedView())
+
+		case key.Matches(msg, m.keys.PrevView):
+			cmds = append(cmds, m.switchSelectedViewBack())
+
 		case key.Matches(msg, m.keys.PrevSection):
 			prevSection := m.getSectionAt(m.getPrevSectionId())
 			if prevSection != nil {
@@ -679,7 +685,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
 				return m, cmd
 
-			case key.Matches(msg, keys.PRKeys.ViewIssues):
+			case key.Matches(msg, keys.NotificationKeys.SwitchToPRs),
+				key.Matches(msg, keys.PRKeys.ViewIssues):
 				cmds = append(cmds, m.switchSelectedView())
 			}
 		}
@@ -1792,7 +1799,18 @@ func (m *Model) setCurrentViewSections(newSections []section.Section) {
 }
 
 func (m *Model) switchSelectedView() tea.Cmd {
-	repoFF := config.IsFeatureEnabled(config.FF_REPO_VIEW)
+	return m.switchSelectedViewInDirection(1)
+}
+
+func (m *Model) switchSelectedViewBack() tea.Cmd {
+	return m.switchSelectedViewInDirection(-1)
+}
+
+func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
+	views := []config.ViewType{config.NotificationsView, config.PRsView, config.IssuesView}
+	if config.IsFeatureEnabled(config.FF_REPO_VIEW) {
+		views = append(views, config.RepoView)
+	}
 
 	// Reset notification subject when leaving notifications view
 	if m.ctx.View == config.NotificationsView {
@@ -1800,28 +1818,15 @@ func (m *Model) switchSelectedView() tea.Cmd {
 		m.notificationView.ClearSubject()
 	}
 
-	// View cycle: Notifications → PRs → Issues (→ Repo if enabled) → Notifications
-	if repoFF {
-		switch m.ctx.View {
-		case config.NotificationsView:
-			m.ctx.View = config.PRsView
-		case config.PRsView:
-			m.ctx.View = config.IssuesView
-		case config.IssuesView:
-			m.ctx.View = config.RepoView
-		case config.RepoView:
-			m.ctx.View = config.NotificationsView
-		}
-	} else {
-		switch m.ctx.View {
-		case config.NotificationsView:
-			m.ctx.View = config.PRsView
-		case config.PRsView:
-			m.ctx.View = config.IssuesView
-		default:
-			m.ctx.View = config.NotificationsView
+	currIndex := 0
+	for i, view := range views {
+		if view == m.ctx.View {
+			currIndex = i
+			break
 		}
 	}
+	nextIndex := (currIndex + direction + len(views)) % len(views)
+	m.ctx.View = views[nextIndex]
 
 	m.syncMainContentDimensions()
 	m.setCurrSectionId(m.getCurrentViewDefaultSection())

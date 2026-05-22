@@ -55,13 +55,12 @@ var IssueKeys = IssueKeyMap{
 		key.WithHelp("t", "toggle smart filtering"),
 	),
 	ViewPRs: key.NewBinding(
-		key.WithKeys("s"),
-		key.WithHelp("s", "switch to notifications"),
+		key.WithHelp("", "switch to notifications"),
 	),
 }
 
 func IssueFullHelp() []key.Binding {
-	return []key.Binding{
+	return enabledBindings(
 		IssueKeys.Label,
 		IssueKeys.Assign,
 		IssueKeys.Unassign,
@@ -71,7 +70,7 @@ func IssueFullHelp() []key.Binding {
 		IssueKeys.Reopen,
 		IssueKeys.ToggleSmartFiltering,
 		IssueKeys.ViewPRs,
-	}
+	)
 }
 
 func rebindIssueKeys(keys []config.Keybinding) error {
