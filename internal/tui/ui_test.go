@@ -342,7 +342,7 @@ func TestNotificationView_PRViewTabNavigation(t *testing.T) {
 	initialTab := m.prView.SelectedTab()
 
 	// Send "next tab" key message
-	msg := tea.KeyPressMsg{Text: "]"}
+	msg := tea.KeyPressMsg{Text: "right"}
 	newModel, _ := m.Update(msg)
 	m = newModel.(Model)
 
@@ -352,7 +352,7 @@ func TestNotificationView_PRViewTabNavigation(t *testing.T) {
 
 	// Now test going back
 	currentTab := m.prView.SelectedTab()
-	msg = tea.KeyPressMsg{Text: "["}
+	msg = tea.KeyPressMsg{Text: "left"}
 	newModel, _ = m.Update(msg)
 	m = newModel.(Model)
 

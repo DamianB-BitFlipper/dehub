@@ -147,7 +147,7 @@ func TestUpdateHandlesSidebarTabNavigation(t *testing.T) {
 		m.carousel.MoveRight()
 		initialTab := m.carousel.SelectedItem()
 
-		msg := tea.KeyPressMsg{Text: "["}
+		msg := tea.KeyPressMsg{Text: "left"}
 		m, _ = m.Update(msg)
 
 		require.NotEqual(t, initialTab, m.carousel.SelectedItem(),
@@ -158,7 +158,7 @@ func TestUpdateHandlesSidebarTabNavigation(t *testing.T) {
 		m := newTestModelForAction(t)
 		initialTab := m.carousel.SelectedItem()
 
-		msg := tea.KeyPressMsg{Text: "]"}
+		msg := tea.KeyPressMsg{Text: "right"}
 		m, _ = m.Update(msg)
 
 		require.NotEqual(t, initialTab, m.carousel.SelectedItem(),

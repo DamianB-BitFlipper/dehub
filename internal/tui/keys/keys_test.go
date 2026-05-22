@@ -167,6 +167,30 @@ func TestFullHelpForPRViewDoesNotIncludeNotificationKeys(t *testing.T) {
 	}
 }
 
+func TestDefaultArrowKeybindings(t *testing.T) {
+	requireKeys(t, Keys.Up, "ctrl+up", "k")
+	requireKeys(t, Keys.Down, "ctrl+down", "j")
+	requireKeys(t, Keys.PrevSection, "ctrl+left")
+	requireKeys(t, Keys.NextSection, "ctrl+right")
+	requireKeys(t, Keys.PageUp, "up")
+	requireKeys(t, Keys.PageDown, "down")
+	requireKeys(t, PRKeys.PrevSidebarTab, "left")
+	requireKeys(t, PRKeys.NextSidebarTab, "right")
+}
+
+func requireKeys(t *testing.T, binding key.Binding, want ...string) {
+	t.Helper()
+	got := binding.Keys()
+	if len(got) != len(want) {
+		t.Fatalf("expected keys %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected keys %v, got %v", want, got)
+		}
+	}
+}
+
 // findKeyByHelp searches for a key binding by its help description
 func findKeyByHelp(keys []key.Binding, helpDesc string) bool {
 	for _, k := range keys {

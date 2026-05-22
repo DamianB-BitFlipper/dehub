@@ -138,12 +138,12 @@ func (k KeyMap) QuitAndHelpKeys() []key.Binding {
 
 var Keys = &KeyMap{
 	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "move up"),
+		key.WithKeys("ctrl+up", "k"),
+		key.WithHelp("Ctrl+↑/k", "move up"),
 	),
 	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "move down"),
+		key.WithKeys("ctrl+down", "j"),
+		key.WithHelp("Ctrl+↓/j", "move down"),
 	),
 	FirstLine: key.NewBinding(
 		key.WithKeys("g", "home"),
@@ -174,20 +174,20 @@ var Keys = &KeyMap{
 		key.WithHelp("R", "refresh all"),
 	),
 	PageDown: key.NewBinding(
-		key.WithKeys("ctrl+d"),
-		key.WithHelp("Ctrl+d", "preview page down"),
+		key.WithKeys("down"),
+		key.WithHelp("↓", "preview page down"),
 	),
 	PageUp: key.NewBinding(
-		key.WithKeys("ctrl+u"),
-		key.WithHelp("Ctrl+u", "preview page up"),
+		key.WithKeys("up"),
+		key.WithHelp("↑", "preview page up"),
 	),
 	NextSection: key.NewBinding(
-		key.WithKeys("right", "l"),
-		key.WithHelp("󰁔/l", "next section"),
+		key.WithKeys("ctrl+right"),
+		key.WithHelp("Ctrl+→", "next section"),
 	),
 	PrevSection: key.NewBinding(
-		key.WithKeys("left", "h"),
-		key.WithHelp("󰁍/h", "previous section"),
+		key.WithKeys("ctrl+left"),
+		key.WithHelp("Ctrl+←", "previous section"),
 	),
 	Search: key.NewBinding(
 		key.WithKeys("/"),

@@ -914,7 +914,7 @@ func (m Model) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
 	v.ReportFocus = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeNone
 
 	if m.ctx.Config == nil {
 		v.Content = lipgloss.Place(
