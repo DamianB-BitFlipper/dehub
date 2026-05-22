@@ -163,6 +163,10 @@ func TestFullHelpForPRViewDoesNotIncludeNotificationKeys(t *testing.T) {
 	if !found {
 		t.Error("expected PR key 'create PR' to be present in PR view")
 	}
+	found = findKeyByHelp(allKeys, "watch checks")
+	if found {
+		t.Error("expected PR key 'watch checks' to be removed from PR view")
+	}
 
 	// Check that notification-specific keys are NOT present
 	found = findKeyByHelp(allKeys, "toggle bookmark")
@@ -270,6 +274,15 @@ func TestRebindPRKeys_CreatePrBuiltin(t *testing.T) {
 	}
 	if PRKeys.Create.Help().Desc != "open create PR" {
 		t.Errorf("expected help to be updated, got %q", PRKeys.Create.Help().Desc)
+	}
+}
+
+func TestRebindPRKeys_WatchChecksBuiltinRemoved(t *testing.T) {
+	err := rebindPRKeys([]config.Keybinding{
+		{Builtin: "watchChecks", Key: "w"},
+	})
+	if err == nil {
+		t.Fatal("expected watchChecks builtin to be removed")
 	}
 }
 

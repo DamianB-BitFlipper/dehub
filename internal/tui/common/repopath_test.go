@@ -1,6 +1,8 @@
 package common_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +13,15 @@ import (
 var configPaths = map[string]string{
 	"user/repo": "/path/to/user/repo",
 	"user_2/*":  "/path/to/user_2/*",
+}
+
+func TestExpandRepoPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	require.Equal(t, filepath.Join(home, "src/repo"), common.ExpandRepoPath("~/src/repo"))
+	require.Equal(t, "/tmp/repo", common.ExpandRepoPath("/tmp/repo"))
+	require.Equal(t, "relative/repo", common.ExpandRepoPath("relative/repo"))
 }
 
 var configPathsWithOwnerRepoTemplateIgnoringOwner = map[string]string{

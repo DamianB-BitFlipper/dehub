@@ -25,7 +25,9 @@ const SectionType = "pr"
 
 type Model struct {
 	section.BaseModel
-	Prs []prrow.Data
+	Prs                     []prrow.Data
+	CreatePRForm            createPRForm
+	createPRBranchRequestID uint64
 }
 
 func NewModel(
@@ -50,6 +52,7 @@ func NewModel(
 		},
 	)
 	m.Prs = []prrow.Data{}
+	m.CreatePRForm = newCreatePRForm(ctx)
 
 	return m
 }
@@ -80,6 +83,33 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 		if m.IsPromptConfirmationFocused() {
+			if m.GetPromptConfirmationAction() == "create_pr" {
+				switch msg.String() {
+				case "ctrl+c", "esc":
+					m.CreatePRForm.Reset()
+					cmd = m.SetIsPromptConfirmationShown(false)
+					return m, cmd
+
+				case "ctrl+d":
+					cmd, err = m.createPR(
+						m.CreatePRForm.Title(),
+						m.CreatePRForm.Body(),
+						m.CreatePRForm.Head(),
+						m.CreatePRForm.Base(),
+					)
+					if err != nil {
+						m.Ctx.Error = err
+						return m, nil
+					}
+					m.CreatePRForm.Reset()
+					blinkCmd := m.SetIsPromptConfirmationShown(false)
+					return m, tea.Batch(cmd, blinkCmd)
+				}
+
+				m.CreatePRForm, cmd = m.CreatePRForm.Update(msg)
+				return m, cmd
+			}
+
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.PromptConfirmationBox.Reset()
@@ -124,10 +154,14 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			cmd = m.diff()
 
 		case key.Matches(msg, keys.PRKeys.Create):
-			cmd, err = m.createPR()
+			cmd, err = m.prepareCreatePRForm()
 			if err != nil {
 				m.Ctx.Error = err
+				return m, nil
 			}
+			m.SetPromptConfirmationAction("create_pr")
+			blinkCmd := m.SetIsPromptConfirmationShown(true)
+			return m, tea.Batch(cmd, blinkCmd)
 
 		case key.Matches(msg, keys.PRKeys.ToggleSmartFiltering):
 			before := m.IsFilteredByCurrentRemote
@@ -159,8 +193,6 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				m.Ctx.Error = err
 			}
 
-		case key.Matches(msg, keys.PRKeys.WatchChecks):
-			cmd = m.watchChecks()
 		}
 
 	case tasks.UpdatePRMsg:
@@ -221,6 +253,24 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			m.Table.UpdateLastUpdated(time.Now())
 			m.UpdateTotalItemsCount(m.TotalCount)
 		}
+
+	case createPRCreatedMsg:
+		m.ResetRows()
+		return m, tea.Batch(m.FetchNextPageSectionRows()...)
+
+	case createPRBranchesFetchedMsg:
+		repoName, ok := m.repoFromFilters()
+		if !m.IsPromptConfirmationShown || m.GetPromptConfirmationAction() != "create_pr" ||
+			!ok || msg.RepoName != repoName || msg.RequestID != m.createPRBranchRequestID {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m.CreatePRForm.SetBranchesError(msg.Err)
+			m.Ctx.Error = msg.Err
+			return m, nil
+		}
+		m.CreatePRForm.SetBranches(msg.Branches, msg.Head, msg.Base)
+		return m, nil
 	}
 
 	search, searchCmd := m.SearchBar.Update(msg)
@@ -245,6 +295,13 @@ func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
 		m.Prs[i].IsEnriched = true
 		m.Prs[i].Enriched = data
 	}
+}
+
+func (m *Model) GetPromptConfirmation() string {
+	if m.IsPromptConfirmationShown && m.GetPromptConfirmationAction() == "create_pr" {
+		return ""
+	}
+	return m.BaseModel.GetPromptConfirmation()
 }
 
 func GetSectionColumns(

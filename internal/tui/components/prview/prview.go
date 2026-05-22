@@ -42,6 +42,14 @@ type Model struct {
 	summaryViewMore bool
 }
 
+type WatchReason int
+
+const (
+	WatchNone WatchReason = iota
+	WatchChecks
+	WatchActivity
+)
+
 var tabs = []string{" Overview", " Activity", " Checks", " Commits", " Files Changed"}
 
 func NewModel(ctx *context.ProgramContext) Model {
@@ -786,6 +794,25 @@ func (m Model) SelectedTab() string {
 
 func (m Model) IsActivityTab() bool {
 	return m.carousel.SelectedItem() == tabs[1]
+}
+
+func (m Model) IsOverviewTab() bool {
+	return m.carousel.SelectedItem() == tabs[0]
+}
+
+func (m Model) IsChecksTab() bool {
+	return m.carousel.SelectedItem() == tabs[2]
+}
+
+func (m Model) WatchReason() WatchReason {
+	switch {
+	case m.IsOverviewTab(), m.IsChecksTab():
+		return WatchChecks
+	case m.IsActivityTab():
+		return WatchActivity
+	default:
+		return WatchNone
+	}
 }
 
 func (m Model) CurrentPRURL() string {

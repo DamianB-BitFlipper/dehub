@@ -8,9 +8,11 @@ import (
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/fuzzyselect"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prompt"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 )
 
@@ -32,9 +34,29 @@ func newTestModel(action string) Model {
 		Prs: []prrow.Data{
 			{Primary: &data.PullRequestData{Number: 42}},
 		},
+		CreatePRForm: newCreatePRForm(ctx),
 	}
 	m.PromptConfirmationBox.Focus()
 	return m
+}
+
+func TestCreatePRBranchesFetchedIgnoresStaleResult(t *testing.T) {
+	m := newTestModel("create_pr")
+	m.SearchValue = "repo:owner/current is:open"
+	m.createPRBranchRequestID = 2
+	m.CreatePRForm.SetBranchesLoading()
+
+	_, _ = m.Update(createPRBranchesFetchedMsg{
+		RepoName:  "owner/old",
+		RequestID: 1,
+		Branches:  []fuzzyselect.Suggestion{{Value: "old-branch"}},
+		Head:      "old-head",
+		Base:      "old-base",
+	})
+
+	require.True(t, m.CreatePRForm.BranchesLoading())
+	require.Empty(t, m.CreatePRForm.Head())
+	require.Empty(t, m.CreatePRForm.Base())
 }
 
 func TestRepoFromFilters(t *testing.T) {
@@ -63,9 +85,8 @@ func TestCreatePRRequiresSingleRepoFilter(t *testing.T) {
 	m := newTestModel("")
 	m.SearchValue = "is:open"
 
-	cmd, err := m.createPR()
+	err := m.validateCanCreatePR()
 
-	require.Nil(t, cmd)
 	require.EqualError(t, err, "current PR section must have exactly one repo:owner/name filter to create a PR")
 }
 
@@ -74,10 +95,20 @@ func TestCreatePRRequiresConfiguredRepoPath(t *testing.T) {
 	m.SearchValue = "repo:owner/name is:open"
 	m.Ctx.Config = &config.Config{RepoPaths: map[string]string{}}
 
-	cmd, err := m.createPR()
+	err := m.validateCanCreatePR()
+
+	require.EqualError(t, err, "local path to repo not specified, set one in your config.yml under repoPaths")
+}
+
+func TestCreatePRRequiresTitle(t *testing.T) {
+	m := newTestModel("")
+	m.SearchValue = "repo:owner/name is:open"
+	m.Ctx.Config = &config.Config{RepoPaths: map[string]string{"owner/name": "/tmp/name"}}
+
+	cmd, err := m.createPR(" ", "body", "feature", "main")
 
 	require.Nil(t, cmd)
-	require.EqualError(t, err, "local path to repo not specified, set one in your config.yml under repoPaths")
+	require.EqualError(t, err, "PR title is required")
 }
 
 func TestCreatePRStartsTaskWhenRepoScoped(t *testing.T) {
@@ -90,12 +121,40 @@ func TestCreatePRStartsTaskWhenRepoScoped(t *testing.T) {
 		return func() tea.Msg { return nil }
 	}
 
-	cmd, err := m.createPR()
+	cmd, err := m.createPR("My PR", "body", "feature", "main")
 
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 	require.Contains(t, started.Id, "create_pr_owner_name")
 	require.Equal(t, "Creating PR in owner/name", started.StartText)
+}
+
+func TestCreatePRRunsGhCreateWithoutWeb(t *testing.T) {
+	orig := runCreatePRRepoCommand
+	defer func() { runCreatePRRepoCommand = orig }()
+
+	var gotPath string
+	var gotArgs []string
+	runCreatePRRepoCommand = func(repoPath string, args ...string) error {
+		gotPath = repoPath
+		gotArgs = args
+		return nil
+	}
+
+	m := newTestModel("")
+	m.SearchValue = "repo:owner/name is:open"
+	m.Ctx.Config = &config.Config{RepoPaths: map[string]string{"owner/name": "/tmp/name"}}
+	m.Ctx.StartTask = func(task context.Task) tea.Cmd { return nil }
+
+	cmd, err := m.createPR("My PR", "body", "feature", "main")
+	require.NoError(t, err)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	require.IsType(t, constants.TaskFinishedMsg{}, msg)
+	require.Equal(t, "/tmp/name", gotPath)
+	require.Equal(t, []string{"gh", "pr", "create", "--title", "My PR", "--body", "body", "--head", "feature", "--base", "main"}, gotArgs)
+	require.NotContains(t, gotArgs, "--web")
 }
 
 func TestConfirmation_AcceptWithEmptyInput(t *testing.T) {

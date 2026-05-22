@@ -64,11 +64,7 @@ func RunRepoCommand(repoPath string, args ...string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	if strings.HasPrefix(repoPath, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			repoPath = strings.Replace(repoPath, "~", home, 1)
-		}
-	}
+	repoPath = ExpandRepoPath(repoPath)
 
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = repoPath
@@ -82,4 +78,13 @@ func RunRepoCommand(repoPath string, args ...string) error {
 		message = err.Error()
 	}
 	return fmt.Errorf("%s failed in %s: %s", strings.Join(args, " "), repoPath, message)
+}
+
+func ExpandRepoPath(repoPath string) string {
+	if strings.HasPrefix(repoPath, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			repoPath = strings.Replace(repoPath, "~", home, 1)
+		}
+	}
+	return repoPath
 }

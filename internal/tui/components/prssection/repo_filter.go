@@ -20,3 +20,7 @@ func repoFromFilters(filters string) (string, bool) {
 func (m *Model) repoFromFilters() (string, bool) {
 	return repoFromFilters(m.GetFilters())
 }
+
+func (m *Model) RepoFromFilters() (string, bool) {
+	return m.repoFromFilters()
+}

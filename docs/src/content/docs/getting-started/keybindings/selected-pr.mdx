@@ -76,6 +76,16 @@ By default `dash` only displays the first 5 lines.
 Press <kbd>m</kbd> to merge the PR. When you do, the dashboard uses the `gh pr merge` command to
 merge the PR.
 
+## `N` - Create PR
+
+Press <kbd>N</kbd> in a PR section with exactly one `repo:owner/name` filter to create a new PR in
+that repository. The dashboard opens an inline form and runs `gh pr create` from the local
+repository path configured in `repoPaths`.
+
+Use <kbd>Tab</kbd> to switch fields. Head and base branch fields are searchable dropdowns; use
+<kbd>↑</kbd>/<kbd>↓</kbd> to choose a branch and <kbd>Enter</kbd> to select it. Use <kbd>Ctrl</kbd>+<kbd>d</kbd>
+to submit and <kbd>Esc</kbd> to cancel.
+
 ## `u` - Update PR
 
 Press <kbd>u</kbd> to update the PR branch. When you do, the dashboard uses the
@@ -86,11 +96,6 @@ Press <kbd>u</kbd> to update the PR branch. When you do, the dashboard uses the
 Press <kbd>v</kbd> to approve the PR. When you do, the dashboard uses the
 `gh pr review --approve` command to approve the PR. This will prompt you to add an optional comment to the approval. The comment prompt will be prefilled with
 `defaults.prApproveComment` if it is set in your configuration, which defaults to "LGTM".
-
-## `w` - Watch PR checks
-
-Press <kbd>w</kbd> to watch the PR check and get a desktop notification if they succeed or fail. When you do, the dashboard uses the
-`gh pr checks --watch` command to watch the PR checks.
 
 ## `W` - Mark PR as Ready for Review
 

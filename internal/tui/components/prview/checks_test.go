@@ -183,6 +183,42 @@ func makeCheckSuite(workflowName string, status string, conclusion string) data.
 	}
 }
 
+func TestIsChecksTab(t *testing.T) {
+	m := newTestModelForChecks(t, checksTestOptions{})
+
+	require.False(t, m.IsChecksTab())
+	m.GoToTab(2)
+	require.True(t, m.IsChecksTab())
+}
+
+func TestWatchReason(t *testing.T) {
+	m := newTestModelForChecks(t, checksTestOptions{})
+
+	require.True(t, m.IsOverviewTab())
+	require.Equal(t, WatchChecks, m.WatchReason())
+
+	m.GoToActivityTab()
+	require.Equal(t, WatchActivity, m.WatchReason())
+
+	m.GoToTab(2)
+	require.Equal(t, WatchChecks, m.WatchReason())
+
+	m.GoToTab(3)
+	require.Equal(t, WatchNone, m.WatchReason())
+}
+
+func TestHasPendingChecks(t *testing.T) {
+	pending := newTestModelForChecks(t, checksTestOptions{
+		checkRuns: []data.CheckRun{makeCheckRun("test", "IN_PROGRESS", "")},
+	})
+	require.True(t, pending.HasPendingChecks())
+
+	completed := newTestModelForChecks(t, checksTestOptions{
+		checkRuns: []data.CheckRun{makeCheckRun("test", "COMPLETED", "SUCCESS")},
+	})
+	require.False(t, completed.HasPendingChecks())
+}
+
 func TestRenderChecks_AwaitingApproval(t *testing.T) {
 	// Test that CheckSuites with conclusion: ACTION_REQUIRED are shown
 	// under "Awaiting Approval" section
@@ -457,7 +493,9 @@ func TestGetChecksStats_AwaitingApproval(t *testing.T) {
 }
 
 func TestGetChecksStats_PendingCheckSuites(t *testing.T) {
-	// Test that getChecksStats correctly counts pending check suites as inProgress
+	// Pending check suites are rendered in the detailed checks list, but they are
+	// not included in overview stats because GitHub's visible summary is based on
+	// statusCheckRollup counts.
 	opts := checksTestOptions{
 		checkSuites: data.CheckSuites{
 			TotalCount: 2,
@@ -473,8 +511,8 @@ func TestGetChecksStats_PendingCheckSuites(t *testing.T) {
 	m := newTestModelForChecks(t, opts)
 	stats := m.getChecksStats()
 
-	require.Equal(t, 2, stats.inProgress,
-		"expected 2 in progress (from pending check suites), got: %d", stats.inProgress)
+	require.Zero(t, stats.inProgress,
+		"expected pending check suites not to affect overview stats, got: %d", stats.inProgress)
 }
 
 func TestGetChecksStats_Mixed(t *testing.T) {
@@ -504,9 +542,8 @@ func TestGetChecksStats_Mixed(t *testing.T) {
 		"expected 1 succeeded, got: %d", stats.succeeded)
 	require.Equal(t, 1, stats.failed,
 		"expected 1 failed, got: %d", stats.failed)
-	// 1 from IN_PROGRESS check run + 1 from QUEUED check suite
-	require.Equal(t, 2, stats.inProgress,
-		"expected 2 in progress, got: %d", stats.inProgress)
+	require.Equal(t, 1, stats.inProgress,
+		"expected 1 in progress, got: %d", stats.inProgress)
 }
 
 func TestViewChecksBar_NarrowWidth_NoPanic(t *testing.T) {

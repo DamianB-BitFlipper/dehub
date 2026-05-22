@@ -643,16 +643,24 @@ func (m *Model) getChecksStats() checksStats {
 		}
 	}
 
-	// Count check suites that don't appear in statusCheckRollup
+	// Count suites that require manual approval. Pending/queued suites are not
+	// included in the overview stats because statusCheckRollup is the source of
+	// truth for visible check counts; adding suites here can double count or show
+	// queued suites that GitHub does not include in the PR checks summary.
 	for _, suite := range lastCommit.Commit.CheckSuites.Nodes {
 		if suite.Conclusion == "ACTION_REQUIRED" {
 			res.awaitingApproval++
-		} else if suite.Status == "QUEUED" || suite.Status == "PENDING" || suite.Status == "WAITING" {
-			res.inProgress++
 		}
 	}
 
 	return res
+}
+
+func (m Model) HasPendingChecks() bool {
+	if !m.hasData() || !m.pr.Data.IsEnriched {
+		return false
+	}
+	return m.getChecksStats().inProgress > 0
 }
 
 func (m *Model) numRequestedReviewOwners() int {

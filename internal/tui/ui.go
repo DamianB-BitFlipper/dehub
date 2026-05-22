@@ -65,6 +65,7 @@ type Model struct {
 	prPreviewStates  map[string]prPreviewState
 	copySelection    copySelectionModel
 	messagePopup     *messagePopup
+	prWatchURL       string
 	positionOverride string // "" means no override, "right" or "bottom"
 }
 
@@ -397,6 +398,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.prView.IsActivityTab() {
 					m.scrollActivityToSavedOffsetOrBottom()
 				}
+				scmds = append(scmds, m.maybeSchedulePRWatch())
 				return m, tea.Batch(scmds...)
 
 			case key.Matches(msg, m.keys.OpenGithub):
@@ -611,7 +613,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var prCmd tea.Cmd
 				m.prView, prCmd = m.prView.Update(msg)
 				m.syncSidebar()
-				cmds = append(cmds, prCmd)
+				cmds = append(cmds, prCmd, m.maybeSchedulePRWatch())
 
 			// Issue keybindings when viewing an Issue notification
 			case m.notificationView.GetSubjectIssue() != nil:
@@ -748,15 +750,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prview.EnrichedPrMsg:
 		if msg.Err == nil {
 			m.prView.SetEnrichedPR(msg.Data)
-			m.prs[msg.Id].(*prssection.Model).EnrichPR(msg.Data)
+			if msg.Id >= 0 && msg.Id < len(m.prs) {
+				m.prs[msg.Id].(*prssection.Model).EnrichPR(msg.Data)
+			}
 			syncCmd := m.syncSidebar()
 			cmds = append(cmds, syncCmd)
 			if m.prView.IsActivityTab() {
 				m.scrollActivityToSavedOffsetOrBottom()
 			}
+			cmds = append(cmds, m.maybeSchedulePRWatch())
 		} else {
 			log.Error("failed enriching pr", "err", msg.Err)
 		}
+
+	case prWatchTick:
+		if msg.url != m.prWatchURL || msg.url != m.prView.CurrentPRURL() || !m.shouldWatchCurrentPR() {
+			if msg.url == m.prWatchURL {
+				m.prWatchURL = ""
+			}
+			return m, nil
+		}
+		return m, fetchPRWatch(msg.url)
+
+	case prWatchFetchedMsg:
+		if msg.url != m.prWatchURL || msg.url != m.prView.CurrentPRURL() || !m.shouldWatchCurrentPR() {
+			return m, nil
+		}
+		m.prWatchURL = ""
+		if msg.err != nil {
+			log.Error("failed refreshing watched PR", "err", msg.err)
+			return m, nil
+		}
+		m.prView.SetEnrichedPR(msg.data)
+		if pr := m.notificationView.GetSubjectPR(); pr != nil && pr.Primary != nil && pr.Primary.Url == msg.url {
+			prData := msg.data.ToPullRequestData()
+			m.notificationView.SetSubjectPR(&prrow.Data{
+				Primary:    &prData,
+				Enriched:   msg.data,
+				IsEnriched: true,
+			}, m.notificationView.GetSubjectId())
+		}
+		if m.ctx.View == config.PRsView && m.currSectionId >= 0 && m.currSectionId < len(m.prs) {
+			if prSection, ok := m.prs[m.currSectionId].(*prssection.Model); ok {
+				prSection.EnrichPR(msg.data)
+			}
+		}
+		cmds = append(cmds, m.syncSidebar(), m.maybeSchedulePRWatch())
 
 	case notificationPRFetchedMsg:
 		if msg.Err == nil {
@@ -787,6 +826,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setPRSidebarContent()
 			}
 			m.markNotificationAsRead(msg.NotificationId)
+			cmds = append(cmds, m.maybeSchedulePRWatch())
 		} else {
 			log.Error("failed fetching notification PR", "err", msg.Err)
 		}
@@ -1030,6 +1070,11 @@ func (m Model) View() tea.View {
 		y := m.ctx.ScreenHeight - common.FooterHeight - m.issueSidebar.InputBoxLineFromButton() - common.InputBoxHeight - 6
 		layers = append(layers, lipgloss.NewLayer(issueCmp).X(previewPos.X+3).Y(y))
 	}
+	if popup := m.renderCreatePRPopup(); popup != "" {
+		layers = append(layers, lipgloss.NewLayer(popup).
+			X(max(0, (m.ctx.ScreenWidth-lipgloss.Width(popup))/2)).
+			Y(max(0, (m.ctx.ScreenHeight-lipgloss.Height(popup))/2)))
+	}
 	if m.messagePopup != nil {
 		popup := m.renderMessagePopup()
 		layers = append(layers, lipgloss.NewLayer(popup).
@@ -1098,7 +1143,7 @@ func (m *Model) onViewedRowChanged() tea.Cmd {
 	}
 	m.notificationView.ResetSubject()
 	keys.SetNotificationSubject(keys.NotificationSubjectNone)
-	return tea.Batch(sidebarCmd, enrichCmd)
+	return tea.Batch(sidebarCmd, enrichCmd, m.maybeSchedulePRWatch())
 }
 
 func (m *Model) saveCurrentPRPreviewState() {
@@ -1939,6 +1984,57 @@ func fetchUser() tea.Msg {
 }
 
 type intervalRefresh time.Time
+
+type prWatchTick struct {
+	url string
+}
+
+type prWatchFetchedMsg struct {
+	url  string
+	data data.EnrichedPullRequestData
+	err  error
+}
+
+var fetchPullRequestForPRWatch = data.FetchPullRequest
+
+func (m *Model) shouldWatchCurrentPR() bool {
+	if !m.sidebar.IsOpen {
+		return false
+	}
+
+	switch m.prView.WatchReason() {
+	case prview.WatchChecks:
+		return m.prView.HasPendingChecks()
+	case prview.WatchActivity:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) maybeSchedulePRWatch() tea.Cmd {
+	if !m.shouldWatchCurrentPR() {
+		m.prWatchURL = ""
+		return nil
+	}
+
+	url := m.prView.CurrentPRURL()
+	if url == "" || m.prWatchURL == url {
+		return nil
+	}
+
+	m.prWatchURL = url
+	return tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
+		return prWatchTick{url: url}
+	})
+}
+
+func fetchPRWatch(url string) tea.Cmd {
+	return func() tea.Msg {
+		pr, err := fetchPullRequestForPRWatch(url)
+		return prWatchFetchedMsg{url: url, data: pr, err: err}
+	}
+}
 
 func (m *Model) doRefreshAtInterval() tea.Cmd {
 	if m.ctx.Config.Defaults.RefetchIntervalMinutes == 0 {

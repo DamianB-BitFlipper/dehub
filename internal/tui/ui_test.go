@@ -213,6 +213,41 @@ func TestNotificationView_SwitchViewWithSKey(t *testing.T) {
 		"switchSelectedView should set view to PRsView when in NotificationsView")
 }
 
+func TestMaybeSchedulePRWatch_ActivityTab(t *testing.T) {
+	ctx := &context.ProgramContext{}
+	prView := prview.NewModel(ctx)
+	prView.SetRow(&prrow.Data{
+		Primary: &data.PullRequestData{Url: "https://github.com/owner/repo/pull/1"},
+	})
+	prView.GoToActivityTab()
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	m := Model{prView: prView, sidebar: sidebarModel}
+
+	cmd := m.maybeSchedulePRWatch()
+
+	require.NotNil(t, cmd)
+	require.Equal(t, "https://github.com/owner/repo/pull/1", m.prWatchURL)
+}
+
+func TestMaybeSchedulePRWatch_OverviewWithoutPendingChecks(t *testing.T) {
+	ctx := &context.ProgramContext{}
+	prView := prview.NewModel(ctx)
+	prView.SetRow(&prrow.Data{
+		Primary: &data.PullRequestData{Url: "https://github.com/owner/repo/pull/1"},
+	})
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	m := Model{prView: prView, sidebar: sidebarModel, prWatchURL: "stale"}
+
+	cmd := m.maybeSchedulePRWatch()
+
+	require.Nil(t, cmd)
+	require.Empty(t, m.prWatchURL)
+}
+
 func TestNotificationView_SwitchViewWithSKey_WhileViewingPR(t *testing.T) {
 	// Test that pressing 's' when viewing a PR notification switches views
 	cfg, err := config.ParseConfig(config.Location{
@@ -1840,6 +1875,55 @@ func TestPromptConfirmationForNotificationPR_ApproveWorkflows(t *testing.T) {
 	// Verify pending action is set
 	require.Equal(t, "pr_approveWorkflows", m.notificationView.GetPendingAction(),
 		"pendingNotificationAction should be set to pr_approveWorkflows")
+}
+
+func TestChecksRefreshFetchedUpdatesNotificationSubjectPR(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		View:   config.NotificationsView,
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	url := "https://github.com/owner/repo/pull/42"
+	pr := &prrow.Data{Primary: &data.PullRequestData{Number: 42, Url: url}}
+	m := Model{
+		ctx:              ctx,
+		keys:             keys.Keys,
+		sidebar:          sidebar.NewModel(),
+		footer:           footer.NewModel(ctx),
+		prView:           prview.NewModel(ctx),
+		issueSidebar:     issueview.NewModel(ctx),
+		branchSidebar:    branchsidebar.NewModel(ctx),
+		notificationView: notificationview.NewModel(ctx),
+		tabs:             tabs.NewModel(ctx),
+		prWatchURL:       url,
+	}
+	m.sidebar.IsOpen = true
+	m.prView.SetRow(pr)
+	m.prView.GoToActivityTab()
+	m.notificationView.SetSubjectPR(pr, "notification-id")
+
+	updated := data.EnrichedPullRequestData{
+		Number: 42,
+		Title:  "updated title",
+		Url:    url,
+	}
+	newModel, _ := m.Update(prWatchFetchedMsg{url: url, data: updated})
+	m = newModel.(Model)
+
+	subject := m.notificationView.GetSubjectPR()
+	require.NotNil(t, subject)
+	require.True(t, subject.IsEnriched)
+	require.Equal(t, "updated title", subject.Primary.Title)
+	require.Equal(t, updated, subject.Enriched)
+	require.Equal(t, "notification-id", m.notificationView.GetSubjectId())
 }
 
 func TestNotificationConfirmation_ApproveWorkflows_AcceptWithY(t *testing.T) {
