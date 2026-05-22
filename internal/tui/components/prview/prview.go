@@ -131,6 +131,25 @@ func (m Model) View() string {
 		return ""
 	}
 
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.HeaderView(),
+		m.BodyView(),
+	)
+}
+
+func (m Model) HeaderView() string {
+	if !m.hasData() {
+		return ""
+	}
+
+	return m.viewHeader()
+}
+
+func (m Model) BodyView() string {
+	if !m.hasData() {
+		return ""
+	}
+
 	body := strings.Builder{}
 	switch m.carousel.SelectedItem() {
 	case tabs[0]:
@@ -147,10 +166,7 @@ func (m Model) View() string {
 		body.WriteString(m.renderChangedFiles())
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.viewHeader(),
-		lipgloss.NewStyle().Padding(0, m.ctx.Styles.Sidebar.ContentPadding).Render(body.String()),
-	)
+	return lipgloss.NewStyle().Padding(0, m.ctx.Styles.Sidebar.ContentPadding).Render(body.String())
 }
 
 func (m *Model) viewHeader() string {
@@ -766,6 +782,10 @@ func (m Model) SelectedTabIndex() int {
 
 func (m Model) SelectedTab() string {
 	return m.carousel.SelectedItem()
+}
+
+func (m Model) IsActivityTab() bool {
+	return m.carousel.SelectedItem() == tabs[1]
 }
 
 func (m Model) CurrentPRURL() string {

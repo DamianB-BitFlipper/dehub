@@ -75,6 +75,7 @@ func (m *Model) renderActivity() string {
 		})
 	}
 
+	// Sort oldest first.
 	sort.Slice(activities, func(i, j int) bool {
 		return activities[i].UpdatedAt.Before(activities[j].UpdatedAt)
 	})

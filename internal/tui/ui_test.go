@@ -33,6 +33,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tabs"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/markdown"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
 
@@ -188,6 +189,7 @@ func TestNotificationView_SwitchViewWithSKey(t *testing.T) {
 	}
 	ctx.Theme = theme.ParseTheme(ctx.Config)
 	ctx.Styles = context.InitStyles(ctx.Theme)
+	markdown.InitializeMarkdownStyle(true)
 
 	sidebarModel := sidebar.NewModel()
 	sidebarModel.UpdateProgramContext(ctx)
@@ -365,7 +367,12 @@ func TestPRPreviewTabMemory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ctx := &context.ProgramContext{Config: &cfg, View: config.PRsView}
+	ctx := &context.ProgramContext{
+		Config:              &cfg,
+		View:                config.PRsView,
+		MainContentHeight:   10,
+		DynamicPreviewWidth: 80,
+	}
 	ctx.Theme = theme.ParseTheme(ctx.Config)
 	ctx.Styles = context.InitStyles(ctx.Theme)
 
@@ -375,26 +382,36 @@ func TestPRPreviewTabMemory(t *testing.T) {
 		{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
 	}
 	prSection.Table.SetRows(prSection.BuildRows())
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	sidebarModel.UpdateProgramContext(ctx)
+	sidebarModel.SetContent(strings.Repeat("line\n", 50))
+	prViewModel := prview.NewModel(ctx)
+	prViewModel.UpdateProgramContext(ctx)
 
 	m := Model{
-		ctx:    ctx,
-		prs:    []section.Section{&prSection},
-		prView: prview.NewModel(ctx),
+		ctx:     ctx,
+		prs:     []section.Section{&prSection},
+		prView:  prViewModel,
+		sidebar: sidebarModel,
 	}
 
 	m.prView.SetRow(&prSection.Prs[0])
 	m.prView.GoToActivityTab()
-	m.saveCurrentPRPreviewTab()
+	m.sidebar.ScrollToOffset(7)
+	m.saveCurrentPRPreviewState()
+	require.Equal(t, 7, m.prPreviewStates[prSection.Prs[0].Primary.Url].scrollY,
+		"saved PR preview state should include scroll offset")
 
 	prSection.NextRow()
 	m.prView.SetRow(&prSection.Prs[1])
-	m.restoreCurrentPRPreviewTab()
+	m.restoreCurrentPRPreviewState()
 	require.Equal(t, 0, m.prView.SelectedTabIndex(),
 		"PRs without saved tab state should default to the overview tab")
 
 	prSection.PrevRow()
 	m.prView.SetRow(&prSection.Prs[0])
-	m.restoreCurrentPRPreviewTab()
+	m.restoreCurrentPRPreviewState()
 	require.Equal(t, 1, m.prView.SelectedTabIndex(),
 		"returning to a PR should restore its previously selected preview tab")
 }

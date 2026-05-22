@@ -62,18 +62,23 @@ type Model struct {
 	ctx              *context.ProgramContext
 	taskSpinner      spinner.Model
 	tasks            map[string]context.Task
-	prPreviewTabs    map[string]int
+	prPreviewStates  map[string]prPreviewState
 	positionOverride string // "" means no override, "right" or "bottom"
+}
+
+type prPreviewState struct {
+	tabIndex int
+	scrollY  int
 }
 
 func NewModel(location config.Location) Model {
 	taskSpinner := spinner.Model{Spinner: spinner.Dot}
 	m := Model{
-		keys:          keys.Keys,
-		sidebar:       sidebar.NewModel(),
-		taskSpinner:   taskSpinner,
-		tasks:         map[string]context.Task{},
-		prPreviewTabs: map[string]int{},
+		keys:            keys.Keys,
+		sidebar:         sidebar.NewModel(),
+		taskSpinner:     taskSpinner,
+		tasks:           map[string]context.Task{},
+		prPreviewStates: map[string]prPreviewState{},
 	}
 
 	version := "dev"
@@ -395,6 +400,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.prView, scmd = m.prView.Update(msg)
 				scmds = append(scmds, scmd)
 				m.syncSidebar()
+				if m.prView.IsActivityTab() {
+					m.scrollActivityToSavedOffsetOrBottom()
+				}
 				return m, tea.Batch(scmds...)
 
 			case key.Matches(msg, m.keys.OpenGithub):
@@ -735,6 +743,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prs[msg.Id].(*prssection.Model).EnrichPR(msg.Data)
 			syncCmd := m.syncSidebar()
 			cmds = append(cmds, syncCmd)
+			if m.prView.IsActivityTab() {
+				m.scrollActivityToSavedOffsetOrBottom()
+			}
 		} else {
 			log.Error("failed enriching pr", "err", msg.Err)
 		}
@@ -759,13 +770,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (indicates there's new activity to show)
 			if msg.LatestCommentUrl != "" {
 				m.prView.GoToActivityTab()
-				m.sidebar.SetContent(m.prView.View())
+				m.setPRSidebarContent()
 				m.sidebar.ScrollToBottom()
 			} else {
 				// For notifications without comments (new PRs, state changes, etc.)
 				// show the Overview tab without scrolling
 				m.prView.GoToFirstTab()
-				m.sidebar.SetContent(m.prView.View())
+				m.setPRSidebarContent()
 			}
 			m.markNotificationAsRead(msg.NotificationId)
 		} else {
@@ -781,6 +792,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.issueSidebar.SetSectionId(0)
 			m.issueSidebar.SetRow(m.notificationView.GetSubjectIssue())
 			m.issueSidebar.SetWidth(width)
+			m.sidebar.ClearHeader()
 			m.sidebar.SetContent(m.issueSidebar.View())
 			// Scroll to bottom if there's a latest comment (indicates new activity)
 			if msg.LatestCommentUrl != "" {
@@ -1031,45 +1043,63 @@ func (m *Model) markNotificationAsRead(notificationId string) {
 }
 
 func (m *Model) onViewedRowChanged() tea.Cmd {
-	m.saveCurrentPRPreviewTab()
+	m.saveCurrentPRPreviewState()
 	m.prView.SetSummaryViewLess()
 	sidebarCmd := m.syncSidebar()
-	m.restoreCurrentPRPreviewTab()
+	restored := m.restoreCurrentPRPreviewState()
 	enrichCmd := m.prView.EnrichCurrRow()
-	m.sidebar.ScrollToTop()
+	if !restored {
+		m.sidebar.ScrollToTop()
+	}
 	m.notificationView.ResetSubject()
 	keys.SetNotificationSubject(keys.NotificationSubjectNone)
 	return tea.Batch(sidebarCmd, enrichCmd)
 }
 
-func (m *Model) saveCurrentPRPreviewTab() {
+func (m *Model) saveCurrentPRPreviewState() {
 	url := m.prView.CurrentPRURL()
 	if url == "" {
 		return
 	}
-	if m.prPreviewTabs == nil {
-		m.prPreviewTabs = map[string]int{}
+	if m.prPreviewStates == nil {
+		m.prPreviewStates = map[string]prPreviewState{}
 	}
-	m.prPreviewTabs[url] = m.prView.SelectedTabIndex()
+	m.prPreviewStates[url] = prPreviewState{
+		tabIndex: m.prView.SelectedTabIndex(),
+		scrollY:  m.sidebar.YOffset(),
+	}
 }
 
-func (m *Model) restoreCurrentPRPreviewTab() {
+func (m *Model) restoreCurrentPRPreviewState() bool {
 	pr, ok := m.getCurrRowData().(*prrow.Data)
 	if !ok || pr == nil || pr.Primary == nil {
-		return
+		return false
 	}
 
 	url := pr.Primary.Url
 	if url == "" {
-		return
+		return false
 	}
-	if tabIndex, ok := m.prPreviewTabs[url]; ok {
-		m.prView.GoToTab(tabIndex)
+	if state, ok := m.prPreviewStates[url]; ok {
+		m.prView.GoToTab(state.tabIndex)
 		m.syncSidebar()
-		return
+		m.sidebar.ScrollToOffset(state.scrollY)
+		return true
 	}
 	m.prView.GoToFirstTab()
 	m.syncSidebar()
+	return false
+}
+
+func (m *Model) scrollActivityToSavedOffsetOrBottom() {
+	url := m.prView.CurrentPRURL()
+	if url != "" {
+		if state, ok := m.prPreviewStates[url]; ok && state.tabIndex == m.prView.SelectedTabIndex() {
+			m.sidebar.ScrollToOffset(state.scrollY)
+			return
+		}
+	}
+	m.sidebar.ScrollToBottom()
 }
 
 func (m *Model) onWindowSizeChanged(msg tea.WindowSizeMsg) {
@@ -1263,6 +1293,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 	var cmd tea.Cmd
 
 	if currRowData == nil {
+		m.sidebar.ClearHeader()
 		m.sidebar.SetContent("")
 		return nil
 	}
@@ -1270,12 +1301,13 @@ func (m *Model) syncSidebar() tea.Cmd {
 	switch row := currRowData.(type) {
 	case branch.BranchData:
 		cmd = m.branchSidebar.SetRow(&row)
+		m.sidebar.ClearHeader()
 		m.sidebar.SetContent(m.branchSidebar.View())
 	case *prrow.Data:
 		m.prView.SetSectionId(m.currSectionId)
 		m.prView.SetRow(row)
 		m.prView.SetWidth(width)
-		m.sidebar.SetContent(m.prView.View())
+		m.setPRSidebarContent()
 		// Scroll to bottom if in input mode to keep inputbox visible
 		if m.prView.IsTextInputBoxFocused() {
 			m.sidebar.ScrollToBottom()
@@ -1284,6 +1316,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 		m.issueSidebar.SetSectionId(m.currSectionId)
 		m.issueSidebar.SetRow(row)
 		m.issueSidebar.SetWidth(width)
+		m.sidebar.ClearHeader()
 		m.sidebar.SetContent(m.issueSidebar.View())
 		// Scroll to bottom if in input mode to keep inputbox visible
 		if m.issueSidebar.IsTextInputBoxFocused() {
@@ -1299,7 +1332,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 				m.prView.SetSectionId(0)
 				m.prView.SetRow(m.notificationView.GetSubjectPR())
 				m.prView.SetWidth(width)
-				m.sidebar.SetContent(m.prView.View())
+				m.setPRSidebarContent()
 				// Scroll to bottom if in input mode to keep inputbox visible
 				if m.prView.IsTextInputBoxFocused() {
 					m.sidebar.ScrollToBottom()
@@ -1308,6 +1341,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 				m.issueSidebar.SetSectionId(0)
 				m.issueSidebar.SetRow(m.notificationView.GetSubjectIssue())
 				m.issueSidebar.SetWidth(width)
+				m.sidebar.ClearHeader()
 				m.sidebar.SetContent(m.issueSidebar.View())
 				// Scroll to bottom if in input mode to keep inputbox visible
 				if m.issueSidebar.IsTextInputBoxFocused() {
@@ -1323,10 +1357,16 @@ func (m *Model) syncSidebar() tea.Cmd {
 		keys.SetNotificationSubject(keys.NotificationSubjectNone)
 		// Show prompt to view notification (don't auto-fetch)
 		// User must press Enter to view content and mark as read
+		m.sidebar.ClearHeader()
 		m.sidebar.SetContent(m.renderNotificationPrompt(row))
 	}
 
 	return cmd
+}
+
+func (m *Model) setPRSidebarContent() {
+	m.sidebar.SetHeader(m.prView.HeaderView())
+	m.sidebar.SetContent(m.prView.BodyView())
 }
 
 func (m *Model) renderNotificationPrompt(row *notificationrow.Data) string {
@@ -1446,6 +1486,7 @@ func (m *Model) loadNotificationContent() tea.Cmd {
 	width := m.sidebar.GetSidebarContentWidth()
 	m.notificationView.SetRow(row)
 	m.notificationView.SetWidth(width)
+	m.sidebar.ClearHeader()
 	m.sidebar.SetContent(m.notificationView.View())
 
 	switch subjectType {

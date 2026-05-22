@@ -14,6 +14,7 @@ import (
 
 type Model struct {
 	IsOpen     bool
+	header     string
 	data       string
 	viewport   viewport.Model
 	ctx        *context.ProgramContext
@@ -68,12 +69,7 @@ func (m Model) View() string {
 			)
 		}
 
-		return style.Render(lipgloss.JoinVertical(
-			lipgloss.Top,
-			m.viewport.View(),
-			m.ctx.Styles.Sidebar.PagerStyle.
-				Render(fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))),
-		))
+		return style.Render(m.renderContent())
 	}
 
 	// Right mode
@@ -88,12 +84,30 @@ func (m Model) View() string {
 		)
 	}
 
-	return style.Render(lipgloss.JoinVertical(
-		lipgloss.Top,
+	return style.Render(m.renderContent())
+}
+
+func (m Model) renderContent() string {
+	content := []string{}
+	if m.header != "" {
+		content = append(content, m.header)
+	}
+	content = append(content,
 		m.viewport.View(),
 		m.ctx.Styles.Sidebar.PagerStyle.
 			Render(fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))),
-	))
+	)
+	return lipgloss.JoinVertical(lipgloss.Top, content...)
+}
+
+func (m *Model) SetHeader(header string) {
+	m.header = header
+	m.updateViewportDimensions()
+}
+
+func (m *Model) ClearHeader() {
+	m.header = ""
+	m.updateViewportDimensions()
 }
 
 func (m *Model) SetContent(data string) {
@@ -123,6 +137,10 @@ func (m *Model) YOffset() int {
 	return m.viewport.YOffset()
 }
 
+func (m *Model) ScrollToOffset(offset int) {
+	m.viewport.SetYOffset(offset)
+}
+
 func (m *Model) ScrollToPercent(percent float64) {
 	totalLines := m.viewport.TotalLineCount()
 	targetLine := int(float64(totalLines) * percent)
@@ -134,10 +152,18 @@ func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
 		return
 	}
 	m.ctx = ctx
+	m.updateViewportDimensions()
+}
+
+func (m *Model) updateViewportDimensions() {
+	if m.ctx == nil {
+		return
+	}
+	headerHeight := lipgloss.Height(m.header)
 	if m.ctx.PreviewPosition == "bottom" {
-		m.viewport.SetHeight(m.ctx.DynamicPreviewHeight - m.ctx.Styles.Sidebar.PagerHeight)
+		m.viewport.SetHeight(max(0, m.ctx.DynamicPreviewHeight-m.ctx.Styles.Sidebar.PagerHeight-headerHeight))
 	} else {
-		m.viewport.SetHeight(m.ctx.MainContentHeight - m.ctx.Styles.Sidebar.PagerHeight)
+		m.viewport.SetHeight(max(0, m.ctx.MainContentHeight-m.ctx.Styles.Sidebar.PagerHeight-headerHeight))
 	}
 	m.viewport.SetWidth(m.GetSidebarContentWidth())
 }
