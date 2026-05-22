@@ -63,6 +63,7 @@ type Model struct {
 	taskSpinner      spinner.Model
 	tasks            map[string]context.Task
 	prPreviewStates  map[string]prPreviewState
+	copySelection    copySelectionModel
 	positionOverride string // "" means no override, "right" or "bottom"
 }
 
@@ -838,6 +839,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			return m, nil
 		}
+
+		{
+			mouse := msg.Mouse()
+			pane, bounds := m.copySelectionPaneAt(mouse.X, mouse.Y)
+			if pane != copySelectionPaneNone {
+				x, y := clampCopySelectionPoint(mouse.X, mouse.Y, bounds)
+				m.copySelection.begin(pane, x, y)
+				return m, nil
+			}
+		}
+
 		if zone.Get("donate").InBounds(msg) {
 			log.Info("Donate clicked", "msg", msg)
 			openCmd := func() tea.Msg {
@@ -849,6 +861,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return nil
 			}
 			cmds = append(cmds, openCmd)
+		}
+
+	case tea.MouseMotionMsg:
+		if m.copySelection.dragging {
+			mouse := msg.Mouse()
+			_, bounds := m.copySelectionPaneAt(m.copySelection.startX, m.copySelection.startY)
+			x, y := clampCopySelectionPoint(mouse.X, mouse.Y, bounds)
+			m.copySelection.update(x, y)
+			return m, nil
+		}
+
+	case tea.MouseReleaseMsg:
+		if m.copySelection.dragging {
+			mouse := msg.Mouse()
+			_, bounds := m.copySelectionPaneAt(m.copySelection.startX, m.copySelection.startY)
+			x, y := clampCopySelectionPoint(mouse.X, mouse.Y, bounds)
+			m.copySelection.update(x, y)
+
+			if !m.copySelection.moved() {
+				m.copySelection.cancel()
+				return m, nil
+			}
+
+			text := m.copySelectionText()
+			m.copySelection.cancel()
+			if strings.TrimSpace(text) == "" {
+				return m, m.notifyErr("No text selected")
+			}
+			if err := clipboard.WriteAll(text); err != nil {
+				return m, m.notifyErr(fmt.Sprintf("Failed copying to clipboard %v", err))
+			}
+			return m, m.notify("Copied selection to clipboard")
 		}
 
 	case tea.WindowSizeMsg:
@@ -914,7 +958,7 @@ func (m Model) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
 	v.ReportFocus = true
-	v.MouseMode = tea.MouseModeNone
+	v.MouseMode = tea.MouseModeAllMotion
 
 	if m.ctx.Config == nil {
 		v.Content = lipgloss.Place(
@@ -935,17 +979,19 @@ func (m Model) View() tea.View {
 	content := "No sections defined"
 	currSection := m.getCurrSection()
 	if currSection != nil {
+		sectionView := m.renderCopySelectionContent(copySelectionPaneMain, currSection.View())
+		sidebarView := m.renderCopySelectionContent(copySelectionPanePreview, m.sidebar.View())
 		if m.ctx.PreviewPosition == "bottom" && m.sidebar.IsOpen {
 			content = lipgloss.JoinVertical(
 				lipgloss.Left,
-				m.getCurrSection().View(),
-				m.sidebar.View(),
+				sectionView,
+				sidebarView,
 			)
 		} else {
 			content = lipgloss.JoinHorizontal(
 				lipgloss.Top,
-				m.getCurrSection().View(),
-				m.sidebar.View(),
+				sectionView,
+				sidebarView,
 			)
 		}
 	}
@@ -990,7 +1036,6 @@ func (m Model) View() tea.View {
 		y := m.ctx.ScreenHeight - common.FooterHeight - m.issueSidebar.InputBoxLineFromButton() - common.InputBoxHeight - 6
 		layers = append(layers, lipgloss.NewLayer(issueCmp).X(previewPos.X+3).Y(y))
 	}
-
 	comp := lipgloss.NewCompositor(layers...)
 	v.SetContent(comp.Render())
 

@@ -42,7 +42,7 @@ type Model struct {
 	summaryViewMore bool
 }
 
-var tabs = []string{" Overview", " Activity", " Commits", " Checks", " Files Changed"}
+var tabs = []string{" Overview", " Activity", " Checks", " Commits", " Files Changed"}
 
 func NewModel(ctx *context.ProgramContext) Model {
 	c := carousel.New(
@@ -157,11 +157,11 @@ func (m Model) BodyView() string {
 	case tabs[1]:
 		body.WriteString(m.renderActivity())
 	case tabs[2]:
-		body.WriteString(m.renderCommits())
-	case tabs[3]:
 		body.WriteString(m.renderChecksOverview())
 		body.WriteString("\n\n")
 		body.WriteString(m.renderChecks())
+	case tabs[3]:
+		body.WriteString(m.renderCommits())
 	case tabs[4]:
 		body.WriteString(m.renderChangedFiles())
 	}
