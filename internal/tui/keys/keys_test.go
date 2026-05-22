@@ -177,6 +177,30 @@ func findKeyByHelp(keys []key.Binding, helpDesc string) bool {
 	return false
 }
 
+func TestRebindPRKeys_CopyBranchBuiltin(t *testing.T) {
+	origKeys := PRKeys.CopyBranch.Keys()
+	origHelp := PRKeys.CopyBranch.Help().Desc
+	defer func() {
+		PRKeys.CopyBranch.SetKeys(origKeys...)
+		PRKeys.CopyBranch.SetHelp(origKeys[0], origHelp)
+	}()
+
+	err := rebindPRKeys([]config.Keybinding{
+		{Builtin: "copyBranch", Key: "B", Name: "copy head branch"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	keys := PRKeys.CopyBranch.Keys()
+	if len(keys) != 1 || keys[0] != "B" {
+		t.Errorf("expected key to be rebound to B, got %v", keys)
+	}
+	if PRKeys.CopyBranch.Help().Desc != "copy head branch" {
+		t.Errorf("expected help to be updated, got %q", PRKeys.CopyBranch.Help().Desc)
+	}
+}
+
 func TestRebindNotificationKeys_Builtin(t *testing.T) {
 	// Save original key and restore after test
 	origKey := NotificationKeys.MarkAsDone.Keys()

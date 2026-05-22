@@ -413,6 +413,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, keys.PRKeys.Comment):
 				return m, m.openSidebarForPRInput(m.prView.SetIsCommenting)
 
+			case key.Matches(msg, keys.PRKeys.CopyBranch):
+				pr, ok := currRowData.(*prrow.Data)
+				if !ok || pr == nil || pr.Primary == nil {
+					return m, m.notifyErr("Current selection isn't associated with a PR")
+				}
+
+				branch := pr.Primary.HeadRefName
+				err := clipboard.WriteAll(branch)
+				if err != nil {
+					return m, m.notifyErr(fmt.Sprintf("Failed copying to clipboard %v", err))
+				}
+				return m, m.notify(fmt.Sprintf("Copied %s to clipboard", branch))
+
 			case key.Matches(msg, keys.PRKeys.Close):
 				if currRowData != nil {
 					cmd = m.promptConfirmation(currSection, "close")

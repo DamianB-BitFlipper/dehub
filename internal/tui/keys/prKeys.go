@@ -18,6 +18,7 @@ type PRKeyMap struct {
 	Label                key.Binding
 	Comment              key.Binding
 	Diff                 key.Binding
+	CopyBranch           key.Binding
 	Checkout             key.Binding
 	Close                key.Binding
 	SummaryViewMore      key.Binding
@@ -63,6 +64,10 @@ var PRKeys = PRKeyMap{
 	Diff: key.NewBinding(
 		key.WithKeys("d"),
 		key.WithHelp("d", "diff"),
+	),
+	CopyBranch: key.NewBinding(
+		key.WithKeys("b"),
+		key.WithHelp("b", "copy branch"),
 	),
 	Checkout: key.NewBinding(
 		key.WithKeys("C", "space"),
@@ -120,6 +125,7 @@ func PRFullHelp() []key.Binding {
 		PRKeys.Label,
 		PRKeys.Comment,
 		PRKeys.Diff,
+		PRKeys.CopyBranch,
 		PRKeys.Checkout,
 		PRKeys.Close,
 		PRKeys.Ready,
@@ -176,6 +182,8 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.Comment
 		case "diff":
 			key = &PRKeys.Diff
+		case "copyBranch":
+			key = &PRKeys.CopyBranch
 		case "checkout":
 			key = &PRKeys.Checkout
 		case "close":
