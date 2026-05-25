@@ -253,6 +253,32 @@ func TestEscapeInCommentModeShowsDiscardPrompt(t *testing.T) {
 	require.True(t, c.showConfirmCancel)
 }
 
+func TestEscapeHidesAutocompleteBeforeCancelingEditor(t *testing.T) {
+	c := newTestController(t)
+	c.SetAutocompleteSource(&fuzzyselect.ListSource{Options: suggestions("alice")})
+	c.Enter(EnterOptions{
+		Mode:                             ModeComment,
+		Prompt:                           "comment",
+		Repo:                             testRepo(),
+		EnterFetch:                       FetchNone,
+		ConfirmDiscardOnCancel:           true,
+		HideAutocompleteWhenContextEmpty: true,
+	})
+	c.fzfSelect.Filter("alice", emptyCtx, nil)
+	c.fzfSelect.Show()
+
+	_, handled := c.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	require.True(t, handled)
+	require.Equal(t, ModeComment, c.Mode())
+	require.False(t, c.fzfSelect.IsVisible())
+	require.False(t, c.showConfirmCancel)
+
+	_, handled = c.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	require.True(t, handled)
+	require.Equal(t, ModeComment, c.Mode())
+	require.True(t, c.showConfirmCancel)
+}
+
 func TestConfirmDiscardExitsMode(t *testing.T) {
 	c := newTestController(t)
 	c.SetAutocompleteSource(&fuzzyselect.UserMentionSource{WithAtSymbol: true})

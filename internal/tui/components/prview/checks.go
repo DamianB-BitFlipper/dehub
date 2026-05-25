@@ -579,6 +579,14 @@ func (sidebar *Model) renderChecks() string {
 	)
 }
 
+func (m *Model) renderEnhanceChecks() string {
+	if m.enhanceChecks == nil {
+		return m.renderChecks()
+	}
+	m.enhanceChecks.SetSize(m.getIndentedContentWidth(), m.enhanceChecksHeight())
+	return m.enhanceChecks.EmbeddedView()
+}
+
 type checksStats struct {
 	succeeded        int
 	neutral          int

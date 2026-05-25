@@ -228,7 +228,23 @@ func (c *Controller) Update(msg tea.Msg) (tea.Cmd, bool) {
 		}
 
 		switch msg.String() {
-		case "esc", "ctrl+c":
+		case "esc":
+			if c.fzfSelect.IsVisible() {
+				c.fzfSelect.Hide()
+				return nil, true
+			}
+			if c.confirmDiscard {
+				if !c.showConfirmCancel {
+					c.setDiscardPrompt()
+					return nil, true
+				}
+				c.Exit()
+				return nil, true
+			}
+			c.Exit()
+			return nil, true
+
+		case "ctrl+c":
 			if c.confirmDiscard {
 				if !c.showConfirmCancel {
 					c.setDiscardPrompt()

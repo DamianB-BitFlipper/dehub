@@ -903,6 +903,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.prView.IsActivityTab() {
 				m.scrollActivityToSavedOffsetOrBottom()
 			}
+			cmds = append(cmds, m.prView.ActivateChecks())
 			cmds = append(cmds, m.maybeSchedulePRWatch())
 		} else {
 			log.Error("failed enriching pr", "err", msg.Err)
@@ -1135,6 +1136,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncSidebar()
 	}
 
+	if m.prView.ShouldUpdateChecks(msg) {
+		m.prView, prViewCmd = m.prView.Update(msg)
+		m.syncSidebar()
+	}
+
 	if m.issueSidebar.IsTextInputBoxFocused() {
 		m.issueSidebar, issueSidebarCmd, _ = m.issueSidebar.Update(msg)
 		m.syncSidebar()
@@ -1191,10 +1197,11 @@ func (m Model) View() tea.View {
 	}
 	s.WriteString("\n")
 	content := "No sections defined"
+	sidebarView := ""
 	currSection := m.getCurrSection()
 	if currSection != nil {
 		sectionView := m.renderCopySelectionContent(copySelectionPaneMain, currSection.View())
-		sidebarView := m.renderCopySelectionContent(copySelectionPanePreview, m.sidebar.View())
+		sidebarView = m.renderCopySelectionContent(copySelectionPanePreview, m.sidebar.View())
 		if m.ctx.PreviewPosition == "bottom" && m.sidebar.IsOpen {
 			content = lipgloss.JoinVertical(
 				lipgloss.Left,
@@ -1228,13 +1235,13 @@ func (m Model) View() tea.View {
 	prCmp := m.prView.ViewCompletions()
 	previewPos := m.ctx.PreviewCursorPosition()
 	if prCmp != "" {
-		y := m.ctx.ScreenHeight - common.FooterHeight - m.prView.InputBoxLineFromBottom() - common.InputBoxHeight - lipgloss.Height(prCmp)
+		y := completionLayerY(previewPos.Y, sidebarView, m.prView.InputBoxLineFromBottom(), prCmp)
 		layers = append(layers, lipgloss.NewLayer(prCmp).X(previewPos.X+3).Y(y))
 	}
 
 	issueCmp := m.issueSidebar.ViewCompletions()
 	if issueCmp != "" {
-		y := m.ctx.ScreenHeight - common.FooterHeight - m.issueSidebar.InputBoxLineFromButton() - common.InputBoxHeight - lipgloss.Height(issueCmp)
+		y := completionLayerY(previewPos.Y, sidebarView, m.issueSidebar.InputBoxLineFromButton(), issueCmp)
 		layers = append(layers, lipgloss.NewLayer(issueCmp).X(previewPos.X+3).Y(y))
 	}
 	if popup := m.renderCreatePRPopup(); popup != "" {
@@ -1257,6 +1264,13 @@ func (m Model) View() tea.View {
 	v.SetContent(comp.Render())
 
 	return v
+}
+
+func completionLayerY(previewTop int, previewView string, inputLineFromBottom int, completions string) int {
+	return max(
+		0,
+		previewTop+lipgloss.Height(previewView)-common.InputBoxHeight-inputLineFromBottom-lipgloss.Height(completions),
+	)
 }
 
 type initMsg struct {
@@ -1315,7 +1329,7 @@ func (m *Model) onViewedRowChanged() tea.Cmd {
 	}
 	m.notificationView.ResetSubject()
 	keys.SetNotificationSubject(keys.NotificationSubjectNone)
-	return tea.Batch(sidebarCmd, enrichCmd, m.maybeSchedulePRWatch())
+	return tea.Batch(sidebarCmd, enrichCmd, m.prView.ActivateChecks(), m.maybeSchedulePRWatch())
 }
 
 func (m *Model) saveCurrentPRPreviewState() {
@@ -1659,6 +1673,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 		m.prView.SetSection(m.currSectionId, sectionType)
 		m.prView.SetRow(row)
 		m.prView.SetWidth(width)
+		cmd = m.prView.ActivateChecks()
 		m.setPRSidebarContent()
 	case *data.IssueData:
 		m.issueSidebar.SetSectionId(m.currSectionId)
@@ -1680,6 +1695,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 				m.prView.SetSection(m.currSectionId, notificationssection.SectionType)
 				m.prView.SetRow(m.notificationView.GetSubjectPR())
 				m.prView.SetWidth(width)
+				cmd = m.prView.ActivateChecks()
 				m.setPRSidebarContent()
 			} else if m.notificationView.GetSubjectIssue() != nil {
 				m.issueSidebar.SetSectionId(0)

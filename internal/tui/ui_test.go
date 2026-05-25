@@ -1761,6 +1761,21 @@ func TestView_ClosingSidebarFromBottomMode_NoExtraLine(t *testing.T) {
 		"closing sidebar from bottom mode should produce the same number of lines as right mode")
 }
 
+func TestCompletionLayerYAnchorsToRenderedPreview(t *testing.T) {
+	previewView := strings.Repeat("x\n", 19) + "x"
+	completions := strings.Repeat("c\n", 4) + "c"
+
+	y := completionLayerY(10, previewView, 2, completions)
+
+	require.Equal(t, 15, y)
+}
+
+func TestCompletionLayerYClampsAtTop(t *testing.T) {
+	y := completionLayerY(0, "x", 0, strings.Repeat("c\n", 8)+"c")
+
+	require.Zero(t, y)
+}
+
 func TestPromptConfirmationForNotificationPR(t *testing.T) {
 	// Test that promptConfirmationForNotificationPR sets the pending action
 	// and displays the confirmation prompt in the footer.

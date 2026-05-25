@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	enhancetui "github.com/dlvhdr/gh-dash/v4/internal/enhance/tui"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/carousel"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/cmpcontroller"
@@ -45,6 +46,8 @@ type Model struct {
 	focusedBottom        int
 	activityFocusTargets []int
 	reviewDiffCache      map[string][]reviewDiffLine
+	enhanceChecks        *enhancetui.Model
+	enhanceChecksKey     string
 }
 
 type WatchReason int
@@ -145,9 +148,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		switch {
 		case key.Matches(keyMsg, keys.PRKeys.PrevSidebarTab):
 			m.carousel.MoveLeft()
+			cmd = m.ActivateChecks()
 		case key.Matches(keyMsg, keys.PRKeys.NextSidebarTab):
 			m.carousel.MoveRight()
+			cmd = m.ActivateChecks()
 		}
+	}
+
+	if m.IsChecksTab() && m.enhanceChecks != nil {
+		var checksCmd tea.Cmd
+		checksModel, checksCmd := m.enhanceChecks.UpdateEmbedded(msg)
+		m.enhanceChecks = &checksModel
+		cmd = tea.Batch(cmd, checksCmd)
 	}
 
 	return m, cmd
@@ -187,7 +199,7 @@ func (m *Model) BodyView() string {
 	case tabs[2]:
 		body.WriteString(m.renderChecksOverview())
 		body.WriteString("\n\n")
-		body.WriteString(m.renderChecks())
+		body.WriteString(m.renderEnhanceChecks())
 	case tabs[3]:
 		body.WriteString(m.renderCommits())
 	case tabs[4]:
@@ -617,13 +629,62 @@ func (m *Model) SetSection(id int, sectionType string) {
 func (m *Model) SetRow(d *prrow.Data) {
 	if d == nil {
 		m.pr = nil
+		m.enhanceChecks = nil
+		m.enhanceChecksKey = ""
 	} else {
-		if d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url {
+		newPR := d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url
+		if newPR {
 			m.FocusNewComment()
+			m.enhanceChecks = nil
+			m.enhanceChecksKey = ""
 		}
 		m.pr = &prrow.PullRequest{Ctx: m.ctx, Data: d}
 		m.clampFocusedReviewThread()
 	}
+}
+
+func (m *Model) ActivateChecks() tea.Cmd {
+	if !m.IsChecksTab() {
+		return nil
+	}
+	return m.ensureEnhanceChecks()
+}
+
+func (m *Model) ShouldUpdateChecks(msg tea.Msg) bool {
+	return m.IsChecksTab() && m.enhanceChecks != nil && enhancetui.HandlesAsyncMsg(msg)
+}
+
+func (m *Model) ensureEnhanceChecks() tea.Cmd {
+	if m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil {
+		return nil
+	}
+
+	repo := m.pr.Data.Primary.GetRepoNameWithOwner()
+	number := fmt.Sprint(m.pr.Data.Primary.GetNumber())
+	key := repo + "#" + number
+	if m.enhanceChecks != nil && m.enhanceChecksKey == key {
+		m.enhanceChecks.SetSize(m.getIndentedContentWidth(), m.enhanceChecksHeight())
+		return nil
+	}
+
+	checks := enhancetui.NewModel(repo, number, enhancetui.ModelOpts{Flat: true})
+	checks.SetSize(m.getIndentedContentWidth(), m.enhanceChecksHeight())
+	m.enhanceChecks = &checks
+	m.enhanceChecksKey = key
+	return checks.Init()
+}
+
+func (m *Model) enhanceChecksHeight() int {
+	if m.ctx == nil {
+		return 24
+	}
+	if m.ctx.DynamicPreviewHeight > 0 {
+		return max(12, m.ctx.DynamicPreviewHeight-8)
+	}
+	if m.ctx.ScreenHeight > 0 {
+		return max(12, m.ctx.ScreenHeight-12)
+	}
+	return 24
 }
 
 type EnrichedPrMsg struct {
