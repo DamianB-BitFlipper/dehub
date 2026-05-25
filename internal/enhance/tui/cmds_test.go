@@ -2,7 +2,11 @@ package tui
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/enhance/api"
 	"github.com/dlvhdr/gh-dash/v4/internal/enhance/data"
@@ -83,6 +87,213 @@ func TestMergingOfSameWorkflowJobs(t *testing.T) {
 
 	if len(m.workflowRuns[0].Jobs) != 2 {
 		t.Fatalf(`expected jobs to have length of 2, got: %d`, len(m.workflowRuns[0].Jobs))
+	}
+}
+
+func TestMakeWorkflowRunsIncludesStatusContexts(t *testing.T) {
+	runs := makeWorkflowRuns([]api.ContextNode{
+		{
+			Typename: "StatusContext",
+			StatusContext: api.StatusContext{
+				Context:     "vercel/deployment",
+				Description: "Preview deployment failed",
+				State:       api.ConclusionFailure,
+				TargetUrl:   "https://example.com/deployment",
+			},
+		},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected one synthetic status context run, got %d", len(runs))
+	}
+	if runs[0].Name != "Status checks" {
+		t.Fatalf("expected status checks run, got %q", runs[0].Name)
+	}
+	if len(runs[0].Jobs) != 1 {
+		t.Fatalf("expected one status context job, got %d", len(runs[0].Jobs))
+	}
+
+	job := runs[0].Jobs[0]
+	if job.Kind != data.JobKindStatusContext {
+		t.Fatalf("expected status context job kind, got %v", job.Kind)
+	}
+	if job.Name != "vercel/deployment" {
+		t.Fatalf("expected status context name, got %q", job.Name)
+	}
+	if job.Bucket != data.CheckBucketFail {
+		t.Fatalf("expected failed bucket, got %v", job.Bucket)
+	}
+}
+
+func TestEmbeddedFlatChecksShowsLoadingBeforeFirstFetch(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+	m.SetSize(80, 20)
+
+	view := m.EmbeddedView()
+	if !strings.Contains(view, "Loading checks") {
+		t.Fatalf("expected loading checks message, got %q", view)
+	}
+}
+
+func TestRenderLogsStripsANSIEscapes(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{})
+	m.SetSize(80, 20)
+	ji := &jobItem{
+		logs: []data.LogsWithTime{
+			{Log: "\x1b[36mcolored output\x1b[0m"},
+			{Log: "^[[31mcaret escaped output^[[0m"},
+		},
+	}
+
+	rendered, unstyled := m.renderLogs(ji)
+
+	if got := rendered[0]; got != "colored output" {
+		t.Fatalf("expected rendered logs to strip ANSI escapes, got %q", got)
+	}
+	if got := unstyled[0]; got != "colored output" {
+		t.Fatalf("expected unstyled logs to strip ANSI escapes, got %q", got)
+	}
+	if got := rendered[1]; got != "caret escaped output" {
+		t.Fatalf("expected rendered logs to strip caret ANSI escapes, got %q", got)
+	}
+	if got := unstyled[1]; got != "caret escaped output" {
+		t.Fatalf("expected unstyled logs to strip caret ANSI escapes, got %q", got)
+	}
+}
+
+func TestFlatChecksCanSelectChecksImperatively(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+	m.SetSize(80, 20)
+	first := NewCheckItem(data.WorkflowJob{
+		Id:         "1",
+		Name:       "first",
+		State:      api.StatusCompleted,
+		Conclusion: api.ConclusionSuccess,
+		Bucket:     data.CheckBucketPass,
+		Kind:       data.JobKindStatusContext,
+	}, m.styles)
+	second := NewCheckItem(data.WorkflowJob{
+		Id:         "2",
+		Name:       "second",
+		State:      api.StatusCompleted,
+		Conclusion: api.ConclusionSuccess,
+		Bucket:     data.CheckBucketPass,
+		Kind:       data.JobKindStatusContext,
+	}, m.styles)
+	m.checksList.SetItems([]list.Item{&first, &second})
+
+	moved, _ := m.SelectNextCheck()
+	if !moved {
+		t.Fatal("expected SelectNextCheck to move selection")
+	}
+	selected := m.getSelectedCheckItem()
+	if selected == nil || selected.job.Id != "2" {
+		t.Fatalf("expected SelectNextCheck to select second check, got %#v", selected)
+	}
+
+	moved, _ = m.SelectPrevCheck()
+	if !moved {
+		t.Fatal("expected SelectPrevCheck to move selection")
+	}
+	selected = m.getSelectedCheckItem()
+	if selected == nil || selected.job.Id != "1" {
+		t.Fatalf("expected SelectPrevCheck to select first check, got %#v", selected)
+	}
+}
+
+func TestEnhanceDoesNotBindCommaDotForCheckNavigation(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+
+	for _, key := range m.checksList.KeyMap.CursorUp.Keys() {
+		if key == "," {
+			t.Fatal("enhance checks list must not bind comma directly")
+		}
+	}
+	for _, key := range m.checksList.KeyMap.CursorDown.Keys() {
+		if key == "." {
+			t.Fatal("enhance checks list must not bind dot directly")
+		}
+	}
+}
+
+func TestEmbeddedEnhanceDoesNotHandleKeyPresses(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+	first := NewCheckItem(data.WorkflowJob{
+		Id:         "1",
+		Name:       "first",
+		State:      api.StatusCompleted,
+		Conclusion: api.ConclusionSuccess,
+		Bucket:     data.CheckBucketPass,
+		Kind:       data.JobKindStatusContext,
+	}, m.styles)
+	second := NewCheckItem(data.WorkflowJob{
+		Id:         "2",
+		Name:       "second",
+		State:      api.StatusCompleted,
+		Conclusion: api.ConclusionSuccess,
+		Bucket:     data.CheckBucketPass,
+		Kind:       data.JobKindStatusContext,
+	}, m.styles)
+	m.checksList.SetItems([]list.Item{&first, &second})
+
+	next, cmd := m.UpdateEmbedded(tea.KeyPressMsg{Code: 'j'})
+	if cmd != nil {
+		t.Fatal("expected embedded keypress to return no command")
+	}
+	selected := next.getSelectedCheckItem()
+	if selected == nil || selected.job.Id != "1" {
+		t.Fatalf("expected embedded keypress not to move selection, got %#v", selected)
+	}
+}
+
+func TestFocusLogsSearchAllowsEmbeddedSearchInputKeys(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+	m.FocusLogsSearch()
+	if !m.logsInput.Focused() {
+		t.Fatal("expected logs input to be focused")
+	}
+
+	next, _ := m.UpdateEmbedded(tea.KeyPressMsg{Text: "x", Code: 'x'})
+	if next.logsInput.Value() != "x" {
+		t.Fatalf("expected embedded keypress to update focused logs search, got %q", next.logsInput.Value())
+	}
+}
+
+func TestEscClearsFocusedLogsSearch(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+	m.FocusLogsSearch()
+
+	next, _ := m.UpdateEmbedded(tea.KeyPressMsg{Text: "x", Code: 'x'})
+	next, _ = next.UpdateEmbedded(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	if next.logsInput.Focused() {
+		t.Fatal("expected esc to blur logs search")
+	}
+	if next.logsInput.Value() != "" {
+		t.Fatalf("expected esc to clear logs search, got %q", next.logsInput.Value())
+	}
+}
+
+func TestFocusLogsSearchKeepsChecksPaneVisible(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true})
+	m.SetSize(100, 30)
+	check := NewCheckItem(data.WorkflowJob{
+		Id:         "1",
+		Name:       "first check",
+		State:      api.StatusCompleted,
+		Conclusion: api.ConclusionSuccess,
+		Bucket:     data.CheckBucketPass,
+		Kind:       data.JobKindStatusContext,
+	}, m.styles)
+	m.checksList.SetItems([]list.Item{&check})
+
+	m.FocusLogsSearch()
+
+	if m.focusedPane != PaneChecks {
+		t.Fatalf("expected focused pane to remain checks, got %v", m.focusedPane)
+	}
+	if !strings.Contains(m.EmbeddedView(), "first check") {
+		t.Fatalf("expected checks pane to remain visible while logs search is focused")
 	}
 }
 

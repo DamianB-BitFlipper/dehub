@@ -162,6 +162,9 @@ func (m *model) makeFetchJobLogsCmd() tea.Cmd {
 	ji.initiatedLogsFetch = true
 	return func() tea.Msg {
 		defer utils.TimeTrack(time.Now(), "fetching job logs")
+		if ji.job.Kind == data.JobKindStatusContext {
+			return nil
+		}
 		if ji.job.Title != "" || ji.job.Kind == data.JobKindCheckRun ||
 			ji.job.Kind == data.JobKindExternal {
 			output, err := api.FetchCheckRunOutput(m.repo, ji.job.Id)
@@ -526,6 +529,18 @@ func makeWorkflowRuns(nodes []api.ContextNode) []data.WorkflowRun {
 		runsMap[wfRunNumber] = run
 	}
 
+	statusContextJobs := makeStatusContextJobs(nodes)
+	if len(statusContextJobs) > 0 {
+		runsMap[-1] = data.WorkflowRun{
+			Id:        "status-contexts",
+			Name:      "Status checks",
+			Workflow:  "Status checks",
+			Jobs:      statusContextJobs,
+			Bucket:    highestPriorityBucket(statusContextJobs),
+			RunNumber: -1,
+		}
+	}
+
 	runs := make([]data.WorkflowRun, 0)
 	for _, run := range runsMap {
 		latestJobs := takeOnlyLatestRunAttempts(run.Jobs)
@@ -535,6 +550,75 @@ func makeWorkflowRuns(nodes []api.ContextNode) []data.WorkflowRun {
 	}
 
 	return runs
+}
+
+func makeStatusContextJobs(nodes []api.ContextNode) []data.WorkflowJob {
+	jobs := make([]data.WorkflowJob, 0)
+	for _, node := range nodes {
+		if node.Typename != "StatusContext" {
+			continue
+		}
+
+		status := node.StatusContext
+		name := status.Context
+		if name == "" {
+			name = "Status check"
+		}
+		state := string(status.State)
+		jobs = append(jobs, data.WorkflowJob{
+			Id:         "status-context:" + name,
+			State:      statusForContextState(state),
+			Conclusion: api.Conclusion(state),
+			Name:       name,
+			Title:      status.Description,
+			Workflow:   "Status checks",
+			Logs:       []data.LogsWithTime{},
+			Link:       status.TargetUrl,
+			Bucket:     data.GetStateBucket(state),
+			Kind:       data.JobKindStatusContext,
+			RunNumber:  -1,
+		})
+	}
+	data.SortJobs(jobs)
+	return jobs
+}
+
+func statusForContextState(state string) api.Status {
+	switch state {
+	case string(api.StatusQueued):
+		return api.StatusQueued
+	case string(api.StatusInProgress):
+		return api.StatusInProgress
+	case string(api.StatusRequested):
+		return api.StatusRequested
+	case string(api.StatusWaiting):
+		return api.StatusWaiting
+	case string(api.StatusPending):
+		return api.StatusPending
+	default:
+		return api.StatusCompleted
+	}
+}
+
+func highestPriorityBucket(jobs []data.WorkflowJob) data.CheckBucket {
+	var res data.CheckBucket = data.CheckBucketPass
+	for _, job := range jobs {
+		switch job.Bucket {
+		case data.CheckBucketFail:
+			return data.CheckBucketFail
+		case data.CheckBucketPending:
+			res = data.CheckBucketPending
+		case data.CheckBucketSkipping:
+			if res != data.CheckBucketPending {
+				res = data.CheckBucketSkipping
+			}
+		case data.CheckBucketNeutral:
+			if res != data.CheckBucketPending && res != data.CheckBucketSkipping {
+				res = data.CheckBucketNeutral
+			}
+		}
+	}
+	return res
 }
 
 func makeWorkflowRun(checkRun api.CheckRun) data.WorkflowRun {

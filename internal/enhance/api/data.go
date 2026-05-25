@@ -108,6 +108,7 @@ type StatusContext struct {
 	Context     string
 	Description string
 	State       Conclusion
+	TargetUrl   string
 }
 
 // CheckRun is a job running in CI on a specific commit. It is part of a CheckSuite.

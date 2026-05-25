@@ -134,7 +134,33 @@ var PRKeys = PRKeyMap{
 }
 
 func PRFullHelp() []key.Binding {
-	return enabledBindings(
+	previewBindings := []key.Binding{}
+	switch prPreviewContext {
+	case PRPreviewContextActivity:
+		previewBindings = append(
+			previewBindings,
+			PRKeys.PrevReviewThread,
+			PRKeys.NextReviewThread,
+			key.NewBinding(
+				key.WithKeys(PRKeys.SummaryViewMore.Keys()...),
+				key.WithHelp(PRKeys.SummaryViewMore.Help().Key, "expand/collapse snippets"),
+			),
+		)
+	case PRPreviewContextChecks:
+		previewBindings = append(
+			previewBindings,
+			key.NewBinding(
+				key.WithKeys(PRKeys.PrevReviewThread.Keys()...),
+				key.WithHelp(PRKeys.PrevReviewThread.Help().Key, "previous check"),
+			),
+			key.NewBinding(
+				key.WithKeys(PRKeys.NextReviewThread.Keys()...),
+				key.WithHelp(PRKeys.NextReviewThread.Help().Key, "next check"),
+			),
+		)
+	}
+
+	bindings := enabledBindings(
 		PRKeys.CopyBranch,
 		PRKeys.PrevSidebarTab,
 		PRKeys.NextSidebarTab,
@@ -152,13 +178,15 @@ func PRFullHelp() []key.Binding {
 		PRKeys.Merge,
 		PRKeys.Update,
 		PRKeys.ApproveWorkflows,
-		PRKeys.PrevReviewThread,
-		PRKeys.NextReviewThread,
+	)
+	bindings = append(bindings, previewBindings...)
+	bindings = append(bindings, enabledBindings(
 		PRKeys.ToggleReviewThread,
 		PRKeys.ToggleSmartFiltering,
 		PRKeys.SortOrder,
 		PRKeys.ViewIssues,
-	)
+	)...)
+	return bindings
 }
 
 func rebindPRKeys(keys []config.Keybinding) error {

@@ -1,6 +1,8 @@
 package prview
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -44,6 +46,26 @@ func TestRenderReviewDiffPreviewEmptyWhenNoHunk(t *testing.T) {
 	require.Empty(t, m.renderReviewDiffPreview("thread-1", "capacity_store.py", "", 80))
 }
 
+func TestRenderReviewDiffPreviewCollapsesLongHunk(t *testing.T) {
+	m := newDiffPreviewTestModel(t)
+	preview := m.renderReviewDiffPreview("thread-1", "capacity_store.py", longReviewDiffHunk(15), 80)
+
+	plain := ansi.Strip(preview)
+	require.Contains(t, plain, "line 10")
+	require.NotContains(t, plain, "line 11")
+	require.Contains(t, plain, "Press e to expand 4 more lines...")
+}
+
+func TestRenderReviewDiffPreviewExpandsLongHunk(t *testing.T) {
+	m := newDiffPreviewTestModel(t)
+	m.activitySnippetsExpanded = true
+	preview := m.renderReviewDiffPreview("thread-1", "capacity_store.py", longReviewDiffHunk(15), 80)
+
+	plain := ansi.Strip(preview)
+	require.Contains(t, plain, "line 14")
+	require.Contains(t, plain, "Press e to collapse")
+}
+
 func TestReviewDiffLinesCachesParsedHunk(t *testing.T) {
 	m := newDiffPreviewTestModel(t)
 	diffHunk := `@@ -344,1 +344,1 @@
@@ -74,4 +96,16 @@ func newDiffPreviewTestModel(t *testing.T) *Model {
 	m.UpdateProgramContext(ctx)
 	m.SetWidth(100)
 	return &m
+}
+
+func longReviewDiffHunk(additions int) string {
+	var b strings.Builder
+	b.WriteString("@@ -1,1 +1,")
+	b.WriteString(fmt.Sprintf("%d", additions+1))
+	b.WriteString(" @@\n")
+	b.WriteString(" context\n")
+	for i := range additions {
+		b.WriteString(fmt.Sprintf("+line %02d\n", i))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

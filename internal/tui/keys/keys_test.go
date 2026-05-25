@@ -29,6 +29,29 @@ func TestSetNotificationSubject(t *testing.T) {
 	}
 }
 
+func TestSetPRPreviewContext(t *testing.T) {
+	defer SetPRPreviewContext(PRPreviewContextNone)
+
+	tests := []struct {
+		name     string
+		context  PRPreviewContext
+		expected PRPreviewContext
+	}{
+		{"none", PRPreviewContextNone, PRPreviewContextNone},
+		{"activity", PRPreviewContextActivity, PRPreviewContextActivity},
+		{"checks", PRPreviewContextChecks, PRPreviewContextChecks},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SetPRPreviewContext(tt.context)
+			if prPreviewContext != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, prPreviewContext)
+			}
+		})
+	}
+}
+
 func TestFullHelpIncludesPRKeysForPRSubject(t *testing.T) {
 	// Set up for notifications view with PR subject
 	keymap := CreateKeyMapForView(config.NotificationsView)
@@ -180,11 +203,63 @@ func TestFullHelpForPRViewDoesNotIncludeNotificationKeys(t *testing.T) {
 	}
 }
 
+func TestPRPreviewHelpChangesWithPreviewContext(t *testing.T) {
+	keymap := CreateKeyMapForView(config.PRsView)
+	SetNotificationSubject(NotificationSubjectNone)
+	defer SetPRPreviewContext(PRPreviewContextNone)
+
+	SetPRPreviewContext(PRPreviewContextActivity)
+	activityKeys := flattenHelp(keymap.FullHelp())
+	if !findKeyByHelp(activityKeys, "previous review thread") {
+		t.Fatal("expected activity help to include previous review thread")
+	}
+	if findKeyByHelp(activityKeys, "previous check") {
+		t.Fatal("did not expect activity help to include previous check")
+	}
+
+	SetPRPreviewContext(PRPreviewContextChecks)
+	checksKeys := flattenHelp(keymap.FullHelp())
+	if !findKeyByHelp(checksKeys, "previous check") {
+		t.Fatal("expected checks help to include previous check")
+	}
+	if !findKeyByHelp(checksKeys, "logs search") {
+		t.Fatal("expected checks help to include logs search")
+	}
+	if findKeyByHelp(checksKeys, "local search") {
+		t.Fatal("did not expect checks help to include local search")
+	}
+	if findKeyByHelp(checksKeys, "previous review thread") {
+		t.Fatal("did not expect checks help to include previous review thread")
+	}
+
+	SetPRPreviewContext(PRPreviewContextNone)
+	noneKeys := flattenHelp(keymap.FullHelp())
+	if findKeyByHelp(noneKeys, "previous check") || findKeyByHelp(noneKeys, "previous review thread") {
+		t.Fatal("did not expect tab-specific comma help without a PR preview context")
+	}
+}
+
+func TestNotificationPRHelpUsesPRPreviewContext(t *testing.T) {
+	keymap := CreateKeyMapForView(config.NotificationsView)
+	SetNotificationSubject(NotificationSubjectPR)
+	SetPRPreviewContext(PRPreviewContextChecks)
+	defer SetNotificationSubject(NotificationSubjectNone)
+	defer SetPRPreviewContext(PRPreviewContextNone)
+
+	allKeys := flattenHelp(keymap.FullHelp())
+	if !findKeyByHelp(allKeys, "previous check") {
+		t.Fatal("expected PR notification checks help to include previous check")
+	}
+	if findKeyByHelp(allKeys, "previous review thread") {
+		t.Fatal("did not expect PR notification checks help to include previous review thread")
+	}
+}
+
 func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, Keys.Up, "up", "k")
 	requireKeys(t, Keys.Down, "down", "j")
-	requireKeys(t, Keys.FirstLine, "h", "home")
-	requireKeys(t, Keys.LastLine, "g", "end")
+	requireKeys(t, Keys.FirstLine, "<", "home")
+	requireKeys(t, Keys.LastLine, ">", "end")
 	requireKeys(t, Keys.PrevSection, "[")
 	requireKeys(t, Keys.NextSection, "]")
 	requireKeys(t, Keys.PageUp, "ctrl+up")
@@ -252,6 +327,14 @@ func requireKeys(t *testing.T, binding key.Binding, want ...string) {
 			t.Fatalf("expected keys %v, got %v", want, got)
 		}
 	}
+}
+
+func flattenHelp(help [][]key.Binding) []key.Binding {
+	var allKeys []key.Binding
+	for _, section := range help {
+		allKeys = append(allKeys, section...)
+	}
+	return allKeys
 }
 
 // findKeyByHelp searches for a key binding by its help description

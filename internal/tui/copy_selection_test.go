@@ -133,3 +133,36 @@ func TestRenderCopySelectionHighlightDoesNotHighlightBottomDivider(t *testing.T)
 		t.Fatalf("expected divider line to remain unchanged, got %q", lines[0])
 	}
 }
+
+func TestClipCopySelectionContentClipsLongLines(t *testing.T) {
+	got := clipCopySelectionContent("0123456789", copySelectionBounds{width: 5, height: 1})
+	want := "01234"
+
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+	if width := lipgloss.Width(got); width != 5 {
+		t.Fatalf("expected width 5, got %d", width)
+	}
+}
+
+func TestClipCopySelectionContentClipsExtraLines(t *testing.T) {
+	got := clipCopySelectionContent("one\ntwo\nthree", copySelectionBounds{width: 10, height: 2})
+	want := "one\ntwo"
+
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestClipCopySelectionContentPreservesANSISafely(t *testing.T) {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	got := clipCopySelectionContent(style.Render("0123456789"), copySelectionBounds{width: 5, height: 1})
+
+	if ansi.Strip(got) != "01234" {
+		t.Fatalf("expected visible text to be clipped, got %q", ansi.Strip(got))
+	}
+	if strings.Contains(ansi.Strip(got), "[38;") {
+		t.Fatalf("clip leaked raw ANSI text: %q", got)
+	}
+}

@@ -227,6 +227,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.prView.IsChecksLogsSearchFocused() {
+			m.prView, cmd = m.prView.Update(msg)
+			m.syncSidebar()
+			return m, cmd
+		}
+
 		if m.prView.IsTextInputBoxFocused() {
 			if key.Matches(msg, keys.Keys.PageUp) || key.Matches(msg, keys.Keys.PageDown) ||
 				key.Matches(msg, keys.Keys.PreviewTop) || key.Matches(msg, keys.Keys.PreviewBottom) {
@@ -415,6 +421,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
+		case key.Matches(msg, m.keys.LocalSearch) && m.prView.IsChecksTab():
+			cmd = m.prView.FocusChecksLogsSearch()
+			m.syncSidebar()
+			return m, cmd
+
 		case key.Matches(msg, m.keys.LocalSearch):
 			if currSection != nil {
 				cmd = currSection.SetIsLocalSearching(true)
@@ -544,11 +555,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, keys.PRKeys.Comment):
 				return m, m.openSidebarForInputNoScroll(m.prView.SetIsCommenting)
 
-			case key.Matches(msg, keys.PRKeys.PrevReviewThread),
-				key.Matches(msg, keys.PRKeys.NextReviewThread):
-				if !m.prView.IsActivityTab() {
-					return m, nil
-				}
+			case m.prView.IsActivityTab() && (key.Matches(msg, keys.PRKeys.PrevReviewThread) ||
+				key.Matches(msg, keys.PRKeys.NextReviewThread)):
 				moved := false
 				if key.Matches(msg, keys.PRKeys.PrevReviewThread) {
 					moved = m.prView.FocusPrevReviewThread()
@@ -560,6 +568,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.syncSidebar()
 				return m, nil
+
+			case m.prView.IsChecksTab() && (key.Matches(msg, keys.PRKeys.PrevReviewThread) ||
+				key.Matches(msg, keys.PRKeys.NextReviewThread)):
+				var moved bool
+				var prCmd tea.Cmd
+				if key.Matches(msg, keys.PRKeys.PrevReviewThread) {
+					moved, prCmd = m.prView.FocusPrevCheck()
+				} else {
+					moved, prCmd = m.prView.FocusNextCheck()
+				}
+				if !moved {
+					return m, nil
+				}
+				m.syncSidebar()
+				return m, tea.Batch(prCmd)
 
 			case key.Matches(msg, keys.PRKeys.ToggleReviewThread):
 				if !m.prView.IsActivityTab() {
@@ -622,6 +645,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.switchSelectedView())
 
 			case key.Matches(msg, keys.PRKeys.SummaryViewMore):
+				if m.prView.IsActivityTab() {
+					m.prView.ToggleActivitySnippetsExpanded()
+					m.syncSidebar()
+					return m, nil
+				}
 				m.prView.SetSummaryViewMore()
 				m.syncSidebar()
 				return m, nil
@@ -762,7 +790,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 						case prview.PRActionPrevReviewThread, prview.PRActionNextReviewThread:
 							if !m.prView.IsActivityTab() {
-								return m, nil
+								if m.prView.IsChecksTab() {
+									var moved bool
+									var prCmd tea.Cmd
+									if action.Type == prview.PRActionPrevReviewThread {
+										moved, prCmd = m.prView.FocusPrevCheck()
+									} else {
+										moved, prCmd = m.prView.FocusNextCheck()
+									}
+									if !moved {
+										return m, nil
+									}
+									m.syncSidebar()
+									cmds = append(cmds, prCmd)
+								}
+								return m, tea.Batch(cmds...)
 							}
 							moved := false
 							if action.Type == prview.PRActionPrevReviewThread {
@@ -1295,6 +1337,9 @@ func (m Model) View() tea.View {
 	layers := []*lipgloss.Layer{
 		lipgloss.NewLayer(zone.Scan(s.String())),
 	}
+	if logsSelectionLayer := m.renderCopySelectionPreviewLogsLayer(); logsSelectionLayer != nil {
+		layers = append(layers, logsSelectionLayer)
+	}
 
 	if currSection != nil {
 		searchCmp := currSection.ViewCompletions()
@@ -1490,14 +1535,6 @@ func (m *Model) scrollActivityToSavedOffsetOrBottom() {
 		}
 	}
 	m.sidebar.ScrollToBottom()
-}
-
-func (m *Model) scrollFocusedActivityToBottom() {
-	offset, ok := m.prView.FocusedActivityScrollOffset(m.sidebar.ViewportHeight())
-	if !ok {
-		return
-	}
-	m.sidebar.ScrollToOffset(offset)
 }
 
 func (m *Model) onWindowSizeChanged(msg tea.WindowSizeMsg) {
@@ -1702,6 +1739,7 @@ func (m *Model) backToNotification() tea.Cmd {
 
 	m.notificationView.ClearSubject()
 	keys.SetNotificationSubject(keys.NotificationSubjectNone)
+	keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 	m.sidebar.ScrollToTop()
 	return m.syncSidebar()
 }
@@ -1770,6 +1808,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 	var cmd tea.Cmd
 
 	if currRowData == nil {
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 		m.sidebar.ClearHeader()
 		m.sidebar.SetContent("")
 		return nil
@@ -1777,6 +1816,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 
 	switch row := currRowData.(type) {
 	case branch.BranchData:
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 		cmd = m.branchSidebar.SetRow(&row)
 		m.sidebar.ClearHeader()
 		m.sidebar.SetContent(m.branchSidebar.View())
@@ -1791,6 +1831,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 		cmd = m.prView.ActivateChecks()
 		m.setPRSidebarContent()
 	case *data.IssueData:
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 		m.issueSidebar.SetSectionId(m.currSectionId)
 		m.issueSidebar.SetRow(row)
 		m.issueSidebar.SetWidth(width)
@@ -1830,6 +1871,7 @@ func (m *Model) syncSidebar() tea.Cmd {
 		// so key dispatch doesn't route keys to the wrong subject's handler.
 		m.notificationView.ClearSubject()
 		keys.SetNotificationSubject(keys.NotificationSubjectNone)
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 		// Show prompt to view notification (don't auto-fetch)
 		// User must press Enter to view content and mark as read
 		m.sidebar.ClearHeader()
@@ -1878,8 +1920,20 @@ func reviewRequestsContainReviewer(
 }
 
 func (m *Model) setPRSidebarContent() {
+	m.syncPRPreviewHelpContext()
 	m.sidebar.SetHeader(m.prView.HeaderView())
 	m.sidebar.SetContent(m.prView.BodyView())
+}
+
+func (m *Model) syncPRPreviewHelpContext() {
+	switch {
+	case m.prView.IsActivityTab():
+		keys.SetPRPreviewContext(keys.PRPreviewContextActivity)
+	case m.prView.IsChecksTab():
+		keys.SetPRPreviewContext(keys.PRPreviewContextChecks)
+	default:
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
+	}
 }
 
 func (m *Model) renderNotificationPrompt(row *notificationrow.Data) string {
@@ -2208,6 +2262,7 @@ func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
 	// Reset notification subject when leaving notifications view
 	if m.ctx.View == config.NotificationsView {
 		keys.SetNotificationSubject(keys.NotificationSubjectNone)
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 		m.notificationView.ClearSubject()
 	}
 

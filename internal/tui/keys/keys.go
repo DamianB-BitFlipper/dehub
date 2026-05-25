@@ -22,9 +22,23 @@ const (
 // notificationSubject tracks the current notification subject type for help display
 var notificationSubject NotificationSubjectType
 
+type PRPreviewContext int
+
+const (
+	PRPreviewContextNone PRPreviewContext = iota
+	PRPreviewContextActivity
+	PRPreviewContextChecks
+)
+
+var prPreviewContext PRPreviewContext
+
 // SetNotificationSubject sets the current notification subject type for help display
 func SetNotificationSubject(subjectType NotificationSubjectType) {
 	notificationSubject = subjectType
+}
+
+func SetPRPreviewContext(context PRPreviewContext) {
+	prPreviewContext = context
 }
 
 type KeyMap struct {
@@ -168,6 +182,14 @@ func (k KeyMap) NavigationKeys() []key.Binding {
 }
 
 func (k KeyMap) AppKeys() []key.Binding {
+	localSearch := k.LocalSearch
+	if prPreviewContext == PRPreviewContextChecks {
+		localSearch = key.NewBinding(
+			key.WithKeys(k.LocalSearch.Keys()...),
+			key.WithHelp(k.LocalSearch.Help().Key, "logs search"),
+		)
+	}
+
 	return []key.Binding{
 		k.Refresh,
 		k.CyclePreview,
@@ -175,7 +197,7 @@ func (k KeyMap) AppKeys() []key.Binding {
 		k.CopyNumber,
 		k.CopyUrl,
 		k.Search,
-		k.LocalSearch,
+		localSearch,
 	}
 }
 
@@ -193,12 +215,12 @@ var Keys = &KeyMap{
 		key.WithHelp("↓/j", "move down"),
 	),
 	FirstLine: key.NewBinding(
-		key.WithKeys("h", "home"),
-		key.WithHelp("h/home", "first item"),
+		key.WithKeys("<", "home"),
+		key.WithHelp("</home", "first item"),
 	),
 	LastLine: key.NewBinding(
-		key.WithKeys("g", "end"),
-		key.WithHelp("g/end", "last item"),
+		key.WithKeys(">", "end"),
+		key.WithHelp(">/end", "last item"),
 	),
 	CyclePreview: key.NewBinding(
 		key.WithKeys("p"),

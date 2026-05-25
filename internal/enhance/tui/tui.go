@@ -24,6 +24,7 @@ import (
 	checks "github.com/dlvhdr/x/gh-checks"
 	help "github.com/dlvhdr/x/help"
 	tint "github.com/lrstanley/bubbletint/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/enhance/api"
 	"github.com/dlvhdr/gh-dash/v4/internal/enhance/data"
@@ -35,6 +36,8 @@ import (
 )
 
 type errMsg error
+
+var caretANSIEscapePattern = regexp.MustCompile(`\^\[\[[0-?]*[ -/]*[@-~]`)
 
 type pane int
 
@@ -78,6 +81,7 @@ type model struct {
 	version           string
 	rateLimit         api.RateLimit
 	lastFetched       time.Time
+	checksFetched     bool
 	helpOpen          bool
 	help              help.Model
 }
@@ -224,11 +228,72 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m Model) UpdateEmbedded(msg tea.Msg) (Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyMsg); ok && !m.logsInput.Focused() {
+		return m, nil
+	}
+
 	next, cmd := m.Update(msg)
 	if nextModel, ok := next.(model); ok {
 		return nextModel, cmd
 	}
 	return m, cmd
+}
+
+func (m *Model) FocusLogsSearch() tea.Cmd {
+	return m.logsInput.Focus()
+}
+
+func (m Model) IsLogsSearchFocused() bool {
+	return m.logsInput.Focused()
+}
+
+func (m Model) LogsSearchValue() string {
+	return m.logsInput.Value()
+}
+
+func (m *Model) clearLogsSearch() {
+	m.logsInput.Blur()
+	m.logsInput.Reset()
+	m.numHighlights = 0
+	m.logsViewport.ClearHighlights()
+	ji := m.getSelectedJobItem()
+	if ji != nil {
+		m.logsViewport.SetContentLines(ji.renderedLogs)
+	}
+}
+
+func (m Model) LogsCopySelectionContent() string {
+	return m.logsViewport.View()
+}
+
+func (m *Model) SelectPrevCheck() (bool, tea.Cmd) {
+	return m.selectCheck(-1)
+}
+
+func (m *Model) SelectNextCheck() (bool, tea.Cmd) {
+	return m.selectCheck(1)
+}
+
+func (m *Model) selectCheck(delta int) (bool, tea.Cmd) {
+	before := m.getSelectedCheckItem()
+	if before == nil {
+		return false, nil
+	}
+
+	if delta < 0 {
+		m.checksList.CursorUp()
+	} else {
+		m.checksList.CursorDown()
+	}
+
+	after := m.getSelectedCheckItem()
+	if after == nil || after.job.Id == before.job.Id {
+		return false, nil
+	}
+
+	cmds := m.onCheckChanged()
+	cmds = append(cmds, m.updateLists()...)
+	return true, tea.Batch(cmds...)
 }
 
 func HandlesAsyncMsg(msg tea.Msg) bool {
@@ -320,6 +385,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wrMsg.err != nil && wrMsg.rateLimit.Remaining == 0 {
 			log.Warn("rate limit reached, waiting", "rateLimit", wrMsg.rateLimit)
 			return m, nil
+		}
+		if wrMsg.err == nil {
+			m.checksFetched = true
 		}
 
 		if len(wrMsg.pr.Commits.Nodes) > 0 {
@@ -449,7 +517,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.logsInput.Focused() {
-			if key.Matches(msg, applySearchKey) {
+			if key.Matches(msg, cancelSearchKey) {
+				m.clearLogsSearch()
+			} else if key.Matches(msg, applySearchKey) {
 				ji := m.getSelectedJobItem()
 				if ji != nil {
 					m.logsViewport.SetContentLines(ji.unstyledLogs)
@@ -680,14 +750,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if key.Matches(msg, cancelSearchKey) {
-				m.logsInput.Blur()
-				m.logsInput.Reset()
-				m.numHighlights = 0
-				m.logsViewport.ClearHighlights()
-				ji := m.getSelectedJobItem()
-				if ji != nil {
-					m.logsViewport.SetContentLines(ji.renderedLogs)
-				}
+				m.clearLogsSearch()
 			}
 		}
 		m.logsViewport, cmd = m.logsViewport.Update(msg)
@@ -718,7 +781,6 @@ func (m model) View() tea.View {
 	}
 
 	header := m.viewHeader()
-	footer := m.viewFooter()
 
 	panes := ""
 	if m.flat {
@@ -736,7 +798,6 @@ func (m model) View() tea.View {
 		lipgloss.Left,
 		header,
 		panes,
-		footer,
 	))
 
 	layers := []*lipgloss.Layer{
@@ -756,7 +817,7 @@ func (m model) View() tea.View {
 
 	comp := lipgloss.NewCompositor(layers...)
 	v.AltScreen = true
-	v.Content = comp.Render()
+	v.Content = zone.Scan(comp.Render())
 	return v
 }
 
@@ -773,7 +834,7 @@ func (m Model) EmbeddedView() string {
 		panes = m.viewHierarchicalChecks()
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, panes, m.viewFooter())
+	content := panes
 	if m.helpOpen {
 		content = lipgloss.JoinVertical(lipgloss.Left, content, "", m.help.View())
 	}
@@ -827,7 +888,15 @@ func (m *model) viewHierarchicalChecks() string {
 }
 
 func (m *model) viewFlatChecks() string {
-	checksPane := makePointingBorder(m.paneStyle(PaneChecks).Render(m.checksList.View()))
+	checksView := m.checksList.View()
+	if !m.checksFetched && len(m.checksList.Items()) == 0 {
+		checksView = lipgloss.JoinVertical(
+			lipgloss.Left,
+			makePill(ListSymbol+" checks", m.styles.focusedPaneTitleStyle, m.styles.colors.focusedColor),
+			m.styles.faintFgStyle.Render("Loading checks..."),
+		)
+	}
+	checksPane := makePointingBorder(m.paneStyle(PaneChecks).Render(checksView))
 	stepsPane := ""
 	if m.shouldShowSteps() {
 		stepsPane = makePointingBorder(m.paneStyle(PaneSteps).Render(m.stepsList.View()))
@@ -1826,6 +1895,13 @@ func (m *model) logsContentView() string {
 		return m.noLogsView("This job was skipped")
 	}
 
+	if ji.job.Kind == data.JobKindStatusContext {
+		if ji.job.Link != "" {
+			return m.noLogsView("This status check does not expose logs here. Press o to open it on GitHub.")
+		}
+		return m.noLogsView("This status check does not expose logs here.")
+	}
+
 	if ji.isStatusInProgress() {
 		text := ""
 		if ji.job.State == api.StatusWaiting && ji.job.PendingEnv != "" {
@@ -1862,13 +1938,14 @@ func (m *model) logsContentView() string {
 			"This run is still in progress", "view the run on github.com"))
 	}
 
+	logsView := zone.Mark("checks-logs", m.logsViewport.View())
 	if m.isScrollbarVisible() {
 		return lipgloss.JoinHorizontal(lipgloss.Top,
-			m.logsViewport.View(),
+			logsView,
 			m.scrollbar.(scrollbar.Vertical).View(),
 		)
 	}
-	return m.logsViewport.View()
+	return logsView
 }
 
 func (m *model) getRunItemById(runId string) *runItem {
@@ -1929,8 +2006,8 @@ func (m *model) renderLogs(ji *jobItem) ([]string, []string) {
 	lines := make([]string, 0)
 	unstyledLines := make([]string, 0)
 	for i, log := range ji.logs {
-		rendered := log.Log
-		unstyled := ansi.Strip(log.Log)
+		unstyled := sanitizeLogText(log.Log)
+		rendered := unstyled
 		switch log.Kind {
 		case data.LogKindError:
 			ji.errorLine = i
@@ -1968,6 +2045,10 @@ func (m *model) renderLogs(ji *jobItem) ([]string, []string) {
 		unstyledLines = append(unstyledLines, unstyled)
 	}
 	return lines, unstyledLines
+}
+
+func sanitizeLogText(s string) string {
+	return caretANSIEscapePattern.ReplaceAllString(ansi.Strip(s), "")
 }
 
 func (m *model) getFocusedPaneWidth(l *list.Model, p pane) int {

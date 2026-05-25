@@ -35,6 +35,7 @@ const (
 	HorizontalLineIcon   = "─"
 	EmptyIcon            = ""
 	FailureIcon          = "󰅙"
+	OpenCircleIcon       = ""
 	PersonIcon           = ""
 	SuccessIcon          = ""
 	TeamIcon             = ""

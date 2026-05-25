@@ -7,9 +7,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	sharedchecks "github.com/dlvhdr/gh-dash/v4/internal/checks"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
-	ghchecks "github.com/dlvhdr/x/gh-checks"
 )
 
 type checkSectionStatus int
@@ -377,30 +377,27 @@ const (
 )
 
 func (m *Model) renderCheckRunConclusion(checkRun data.CheckRun) (CheckCategory, string) {
-	if ghchecks.IsStatusWaiting(string(checkRun.Status)) {
+	switch sharedchecks.CategoryForCheckRun(string(checkRun.Status), string(checkRun.Conclusion)) {
+	case sharedchecks.CategoryPending:
 		return CheckWaiting, m.ctx.Styles.Common.WaitingGlyph
-	}
-
-	if ghchecks.IsConclusionAFailure(string(checkRun.Conclusion)) {
+	case sharedchecks.CategoryFailure:
 		return CheckFailure, m.ctx.Styles.Common.FailureGlyph
+	default:
+		return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
 	}
-
-	return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
 }
 
 func (m *Model) renderStatusContextConclusion(
 	statusContext data.StatusContext,
 ) (CheckCategory, string) {
-	conclusionStr := string(statusContext.State)
-	if ghchecks.IsStatusWaiting(conclusionStr) {
+	switch sharedchecks.CategoryForState(string(statusContext.State)) {
+	case sharedchecks.CategoryPending:
 		return CheckWaiting, m.ctx.Styles.Common.WaitingGlyph
-	}
-
-	if ghchecks.IsConclusionAFailure(conclusionStr) {
+	case sharedchecks.CategoryFailure:
 		return CheckFailure, m.ctx.Styles.Common.FailureGlyph
+	default:
+		return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
 	}
-
-	return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
 }
 
 func renderStatusContextName(statusContext data.StatusContext) string {
@@ -603,18 +600,7 @@ func (m *Model) getStatusCheckRollupStats(rollup data.StatusCheckRollupStats) ch
 	allChecks = append(allChecks, rollup.Contexts.StatusContextCountsByState...)
 
 	for _, count := range allChecks {
-		state := string(count.State)
-		if ghchecks.IsStatusWaiting(state) {
-			res.inProgress += int(count.Count)
-		} else if ghchecks.IsConclusionAFailure(state) {
-			res.failed += int(count.Count)
-		} else if ghchecks.IsConclusionASkip(state) {
-			res.skipped += int(count.Count)
-		} else if ghchecks.IsConclusionNeutral(state) {
-			res.neutral += int(count.Count)
-		} else if ghchecks.IsConclusionASuccess(state) {
-			res.succeeded += int(count.Count)
-		}
+		addSharedStats(&res, string(count.State), int(count.Count))
 	}
 
 	return res
@@ -637,18 +623,7 @@ func (m *Model) getChecksStats() checksStats {
 		lastCommit.Commit.StatusCheckRollup.Contexts.StatusContextCountsByState...)
 
 	for _, count := range allChecks {
-		state := string(count.State)
-		if ghchecks.IsStatusWaiting(state) {
-			res.inProgress += int(count.Count)
-		} else if ghchecks.IsConclusionAFailure(state) {
-			res.failed += int(count.Count)
-		} else if ghchecks.IsConclusionASkip(state) {
-			res.skipped += int(count.Count)
-		} else if ghchecks.IsConclusionNeutral(state) {
-			res.neutral += int(count.Count)
-		} else if ghchecks.IsConclusionASuccess(state) {
-			res.succeeded += int(count.Count)
-		}
+		addSharedStats(&res, string(count.State), int(count.Count))
 	}
 
 	// Count suites that require manual approval. Pending/queued suites are not
@@ -662,6 +637,22 @@ func (m *Model) getChecksStats() checksStats {
 	}
 
 	return res
+}
+
+func addSharedStats(res *checksStats, state string, count int) {
+	stats := sharedchecks.Stats{
+		Succeeded:  res.succeeded,
+		Neutral:    res.neutral,
+		Failed:     res.failed,
+		Skipped:    res.skipped,
+		InProgress: res.inProgress,
+	}
+	sharedchecks.AddStateCount(&stats, state, count)
+	res.succeeded = stats.Succeeded
+	res.neutral = stats.Neutral
+	res.failed = stats.Failed
+	res.skipped = stats.Skipped
+	res.inProgress = stats.InProgress
 }
 
 func (m Model) HasPendingChecks() bool {

@@ -5,6 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 )
@@ -15,6 +16,7 @@ const (
 	copySelectionPaneNone copySelectionPane = iota
 	copySelectionPaneMain
 	copySelectionPanePreview
+	copySelectionPanePreviewLogs
 )
 
 type copySelectionBounds struct {
@@ -63,6 +65,10 @@ func (s copySelectionModel) moved() bool {
 }
 
 func (m *Model) copySelectionPaneAt(x, y int) (copySelectionPane, copySelectionBounds) {
+	if logsBounds, ok := m.copySelectionPreviewLogsBounds(); ok && inCopySelectionBounds(x, y, logsBounds) {
+		return copySelectionPanePreviewLogs, logsBounds
+	}
+
 	mainBounds, previewBounds := m.copySelectionBounds()
 	if inCopySelectionBounds(x, y, previewBounds) {
 		return copySelectionPanePreview, previewBounds
@@ -71,6 +77,23 @@ func (m *Model) copySelectionPaneAt(x, y int) (copySelectionPane, copySelectionB
 		return copySelectionPaneMain, mainBounds
 	}
 	return copySelectionPaneNone, copySelectionBounds{}
+}
+
+func (m *Model) copySelectionPreviewLogsBounds() (copySelectionBounds, bool) {
+	if _, ok := m.prView.ChecksLogsCopySelectionContent(); !ok {
+		return copySelectionBounds{}, false
+	}
+
+	logsZone := zone.Get("checks-logs")
+	if logsZone == nil || logsZone.IsZero() {
+		return copySelectionBounds{}, false
+	}
+	return copySelectionBounds{
+		x:      logsZone.StartX,
+		y:      logsZone.StartY,
+		width:  max(0, logsZone.EndX-logsZone.StartX+1),
+		height: max(0, logsZone.EndY-logsZone.StartY+1),
+	}, true
 }
 
 func (m *Model) copySelectionBounds() (copySelectionBounds, copySelectionBounds) {
@@ -171,6 +194,13 @@ func (m *Model) copySelectionPaneContent(pane copySelectionPane) (copySelectionB
 		}
 	case copySelectionPanePreview:
 		return previewBounds, m.copySelectionPreviewContent(), true
+	case copySelectionPanePreviewLogs:
+		bounds, ok := m.copySelectionPreviewLogsBounds()
+		if !ok {
+			return copySelectionBounds{}, "", false
+		}
+		content, ok := m.prView.ChecksLogsCopySelectionContent()
+		return bounds, ansi.Strip(content), ok
 	}
 	return copySelectionBounds{}, "", false
 }
@@ -205,6 +235,9 @@ func (m *Model) renderCopySelectionContent(pane copySelectionPane, content strin
 	if !m.copySelection.hasSelection() || m.copySelection.pane != pane {
 		return content
 	}
+	if pane == copySelectionPanePreviewLogs {
+		return content
+	}
 
 	mainBounds, _ := m.copySelectionBounds()
 	bounds := mainBounds
@@ -224,6 +257,54 @@ func (m *Model) renderCopySelectionContent(pane copySelectionPane, content strin
 		m.copySelection.endY,
 		style,
 	)
+}
+
+func (m *Model) renderCopySelectionPreviewLogsLayer() *lipgloss.Layer {
+	if !m.copySelection.hasSelection() || m.copySelection.pane != copySelectionPanePreviewLogs {
+		return nil
+	}
+
+	bounds, ok := m.copySelectionPreviewLogsBounds()
+	if !ok {
+		return nil
+	}
+	content, ok := m.prView.ChecksLogsCopySelectionContent()
+	if !ok || content == "" {
+		return nil
+	}
+
+	style := lipgloss.NewStyle().
+		Background(m.ctx.Theme.SelectedBackground).
+		Foreground(m.ctx.Theme.PrimaryText)
+	highlighted := renderCopySelectionHighlight(
+		content,
+		bounds,
+		m.copySelection.startX,
+		m.copySelection.startY,
+		m.copySelection.endX,
+		m.copySelection.endY,
+		style,
+	)
+	highlighted = clipCopySelectionContent(highlighted, bounds)
+	return lipgloss.NewLayer(highlighted).X(bounds.x).Y(bounds.y)
+}
+
+func clipCopySelectionContent(content string, bounds copySelectionBounds) string {
+	if bounds.width <= 0 || bounds.height <= 0 || content == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	if len(lines) > bounds.height {
+		lines = lines[:bounds.height]
+	}
+	for i, line := range lines {
+		lineWidth := lipgloss.Width(line)
+		if lineWidth > bounds.width {
+			lines[i] = ansi.Cut(line, 0, bounds.width)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderCopySelectionHighlight(

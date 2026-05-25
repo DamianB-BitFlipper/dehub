@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	sharedchecks "github.com/dlvhdr/gh-dash/v4/internal/checks"
 	"github.com/dlvhdr/gh-dash/v4/internal/enhance/api"
 )
 
@@ -71,6 +72,7 @@ const (
 	JobKindCheckRun JobKind = iota
 	JobKindGithubActions
 	JobKindExternal
+	JobKindStatusContext
 )
 
 type CheckBucket int
@@ -85,18 +87,22 @@ const (
 )
 
 func GetConclusionBucket(conclusion api.Conclusion) CheckBucket {
-	switch conclusion {
-	case "SUCCESS":
+	return GetStateBucket(string(conclusion))
+}
+
+func GetStateBucket(state string) CheckBucket {
+	switch sharedchecks.CategoryForState(state) {
+	case sharedchecks.CategorySuccess:
 		return CheckBucketPass
-	case "SKIPPED":
+	case sharedchecks.CategorySkipped:
 		return CheckBucketSkipping
-	case "NEUTRAL":
+	case sharedchecks.CategoryNeutral:
 		return CheckBucketNeutral
-	case "ERROR", "FAILURE", "TIMED_OUT", "ACTION_REQUIRED":
+	case sharedchecks.CategoryFailure:
 		return CheckBucketFail
-	case "CANCELLED":
+	case sharedchecks.CategoryCancelled:
 		return CheckBucketCancel
-	default: // "EXPECTED", "REQUESTED", "WAITING", "QUEUED", "PENDING", "IN_PROGRESS", "STALE"
+	default:
 		return CheckBucketPending
 	}
 }

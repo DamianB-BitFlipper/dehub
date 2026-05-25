@@ -43,11 +43,19 @@ type Model struct {
 	editor               cmpcontroller.Controller
 	summaryViewMore      bool
 	focusedThread        int
-	focusedBottom        int
 	activityFocusTargets []int
+	activityCache        activityRenderCache
+	activityBodyCache    map[string]string
 	reviewDiffCache      map[string][]reviewDiffLine
+	activitySnippetsExpanded bool
 	enhanceChecks        *enhancetui.Model
 	enhanceChecksKey     string
+}
+
+type activityRenderCache struct {
+	width       int
+	fingerprint string
+	activities  []cachedActivity
 }
 
 type WatchReason int
@@ -195,6 +203,9 @@ func (m *Model) BodyView() string {
 	case tabs[0]:
 		body.WriteString(m.viewOverviewTab())
 	case tabs[1]:
+		if m.editor.Mode() == cmpcontroller.ModeNone {
+			return m.cachedActivityBodyView()
+		}
 		body.WriteString(m.renderActivity())
 	case tabs[2]:
 		body.WriteString(m.renderChecksOverview())
@@ -635,6 +646,8 @@ func (m *Model) SetRow(d *prrow.Data) {
 		newPR := d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url
 		if newPR {
 			m.FocusNewComment()
+			m.activitySnippetsExpanded = false
+			m.invalidateActivityCache()
 			m.enhanceChecks = nil
 			m.enhanceChecksKey = ""
 		}
@@ -648,6 +661,45 @@ func (m *Model) ActivateChecks() tea.Cmd {
 		return nil
 	}
 	return m.ensureEnhanceChecks()
+}
+
+func (m *Model) FocusPrevCheck() (bool, tea.Cmd) {
+	if !m.IsChecksTab() || m.enhanceChecks == nil {
+		return false, nil
+	}
+	return m.enhanceChecks.SelectPrevCheck()
+}
+
+func (m *Model) FocusNextCheck() (bool, tea.Cmd) {
+	if !m.IsChecksTab() || m.enhanceChecks == nil {
+		return false, nil
+	}
+	return m.enhanceChecks.SelectNextCheck()
+}
+
+func (m *Model) FocusChecksLogsSearch() tea.Cmd {
+	if !m.IsChecksTab() || m.enhanceChecks == nil {
+		return nil
+	}
+	return m.enhanceChecks.FocusLogsSearch()
+}
+
+func (m Model) IsChecksLogsSearchFocused() bool {
+	return m.enhanceChecks != nil && m.IsChecksTab() && m.enhanceChecks.IsLogsSearchFocused()
+}
+
+func (m Model) ChecksLogsSearchValue() (string, bool) {
+	if !m.IsChecksTab() || m.enhanceChecks == nil {
+		return "", false
+	}
+	return m.enhanceChecks.LogsSearchValue(), true
+}
+
+func (m Model) ChecksLogsCopySelectionContent() (string, bool) {
+	if !m.IsChecksTab() || m.enhanceChecks == nil {
+		return "", false
+	}
+	return m.enhanceChecks.LogsCopySelectionContent(), true
 }
 
 func (m *Model) ShouldUpdateChecks(msg tea.Msg) bool {
@@ -711,6 +763,9 @@ func (m *Model) EnrichCurrRow() tea.Cmd {
 }
 
 func (m *Model) SetWidth(width int) {
+	if m.width != width {
+		m.invalidateActivityCache()
+	}
 	m.width = width
 	m.carousel.SetWidth(width)
 	m.editor.SetWidth(
@@ -1003,14 +1058,6 @@ func (m *Model) FocusPrevReviewThread() bool {
 	return m.focusReviewThread(-1)
 }
 
-func (m Model) FocusedActivityScrollOffset(viewportHeight int) (int, bool) {
-	if m.focusedBottom <= 0 {
-		return 0, false
-	}
-
-	return max(0, m.focusedBottom-viewportHeight), true
-}
-
 func (m *Model) focusReviewThread(delta int) bool {
 	if m.pr == nil || m.pr.Data == nil || !m.pr.Data.IsEnriched {
 		return false
@@ -1143,6 +1190,11 @@ func (m *Model) SetSummaryViewLess() {
 	m.summaryViewMore = false
 }
 
+func (m *Model) ToggleActivitySnippetsExpanded() {
+	m.activitySnippetsExpanded = !m.activitySnippetsExpanded
+	m.invalidateActivityCache()
+}
+
 func (m *Model) SetEnrichedPR(data data.EnrichedPullRequestData) {
 	if m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil {
 		return
@@ -1153,6 +1205,7 @@ func (m *Model) SetEnrichedPR(data data.EnrichedPullRequestData) {
 		m.pr.Data.Primary = &primary
 		m.pr.Data.Enriched = data
 		m.pr.Data.IsEnriched = true
+		m.invalidateActivityCache()
 		m.reviewDiffCache = map[string][]reviewDiffLine{}
 		m.clampFocusedReviewThread()
 	}

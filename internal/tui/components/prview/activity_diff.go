@@ -11,6 +11,8 @@ import (
 	sourcediff "github.com/sourcegraph/go-diff/diff"
 )
 
+const collapsedReviewDiffPreviewLines = 12
+
 type reviewDiffLine struct {
 	OldLine int
 	NewLine int
@@ -70,8 +72,13 @@ func (m *Model) renderReviewDiffPreview(threadID string, path string, diffHunk s
 	if len(lines) == 0 {
 		return ""
 	}
+	isCollapsed := !m.activitySnippetsExpanded && len(lines) > collapsedReviewDiffPreviewLines
+	renderLines := lines
+	if isCollapsed {
+		renderLines = lines[:collapsedReviewDiffPreviewLines]
+	}
 
-	oldWidth, newWidth := lineNumberWidths(lines)
+	oldWidth, newWidth := lineNumberWidths(renderLines)
 	gutterWidth := oldWidth + newWidth + 4
 	codeWidth := max(1, width-gutterWidth)
 
@@ -80,8 +87,8 @@ func (m *Model) renderReviewDiffPreview(threadID string, path string, diffHunk s
 	addStyle := lipgloss.NewStyle().Foreground(m.ctx.Theme.SuccessText)
 	deleteStyle := lipgloss.NewStyle().Foreground(m.ctx.Theme.ErrorText)
 
-	rendered := make([]string, 0, len(lines))
-	for _, line := range lines {
+	rendered := make([]string, 0, len(renderLines)+1)
+	for _, line := range renderLines {
 		style := contextStyle
 		sign := " "
 		switch line.Prefix {
@@ -105,6 +112,13 @@ func (m *Model) renderReviewDiffPreview(threadID string, path string, diffHunk s
 			" ",
 			style.Render(code),
 		))
+	}
+	if len(lines) > collapsedReviewDiffPreviewLines {
+		hint := "Press e to collapse"
+		if isCollapsed {
+			hint = fmt.Sprintf("Press e to expand %d more lines...", len(lines)-collapsedReviewDiffPreviewLines)
+		}
+		rendered = append(rendered, lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Italic(true).Render(hint))
 	}
 
 	return lipgloss.NewStyle().MarginBottom(1).Render(lipgloss.JoinVertical(lipgloss.Left, rendered...))

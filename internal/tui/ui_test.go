@@ -611,6 +611,59 @@ func TestPRPreviewTabMemory(t *testing.T) {
 		"returning to a PR should restore its previously selected preview tab")
 }
 
+func TestChecksLogsSearchReceivesTypingBeforeMainLocalSearch(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		View:   config.PRsView,
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+	prSection.Prs = append(prSection.Prs, prrow.Data{
+		Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1"),
+	})
+	prSection.Table.SetRows(prSection.BuildRows())
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	sidebarModel.UpdateProgramContext(ctx)
+
+	m := Model{
+		ctx:           ctx,
+		keys:          keys.Keys,
+		prs:           []section.Section{&prSection},
+		currSectionId: 0,
+		prView:        prview.NewModel(ctx),
+		sidebar:       sidebarModel,
+		activePane:    previewPane,
+	}
+	m.ctx.ActivePane = "preview"
+	m.prView.UpdateProgramContext(ctx)
+	m.prView.SetRow(&prSection.Prs[0])
+	m.prView.SetWidth(80)
+	m.prView.GoToTab(2)
+	m.prView.ActivateChecks()
+
+	next, _ := m.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
+	m = next.(Model)
+	require.False(t, prSection.IsLocalSearchFocused(), "main local search should not focus on Checks tab")
+	require.True(t, m.prView.IsChecksLogsSearchFocused(), "checks logs search should be focused")
+
+	next, _ = m.Update(tea.KeyPressMsg{Text: "x", Code: 'x'})
+	m = next.(Model)
+	value, ok := m.prView.ChecksLogsSearchValue()
+	require.True(t, ok)
+	require.Equal(t, "x", value)
+	require.False(t, prSection.IsLocalSearchFocused(), "typing into logs search should not trigger main local search")
+}
+
 func testPullRequestData(number int, url string) *data.PullRequestData {
 	pr := &data.PullRequestData{
 		Number:      number,
@@ -1454,11 +1507,11 @@ func TestPreviewFocusRoutesNavigationToSidebar(t *testing.T) {
 	require.Equal(t, initialRow, prSection.CurrRow())
 	require.Greater(t, m.sidebar.YOffset(), initialOffset)
 
-	newModel, _ = m.Update(tea.KeyPressMsg{Text: "g"})
+	newModel, _ = m.Update(tea.KeyPressMsg{Text: ">"})
 	m = newModel.(Model)
 	require.Greater(t, m.sidebar.YOffset(), 0)
 
-	newModel, _ = m.Update(tea.KeyPressMsg{Text: "h"})
+	newModel, _ = m.Update(tea.KeyPressMsg{Text: "<"})
 	m = newModel.(Model)
 	require.Equal(t, 0, m.sidebar.YOffset())
 

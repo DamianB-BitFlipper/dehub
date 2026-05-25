@@ -3,6 +3,7 @@ package prview
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"charm.land/glamour/v2"
@@ -16,23 +17,115 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
 
-type RenderedActivity struct {
-	UpdatedAt      time.Time
-	RenderedString string
-	FocusTarget    int
+type cachedActivity struct {
+	UpdatedAt       time.Time
+	RenderedString  string
+	RenderedCard    string
+	FocusTarget     int
+	Thread          *cachedReviewThread
+}
+
+type cachedReviewThread struct {
+	UnfocusedCard string
+	FocusedCard   string
+	Header        string
+	Body          string
+	Width         int
 }
 
 func (m *Model) renderActivity() string {
 	width := m.getIndentedContentWidth()
-	markdownRenderer := markdown.GetMarkdownRenderer(max(1, width-4))
 	bodyStyle := lipgloss.NewStyle()
-
-	var activities []RenderedActivity
-	var comments []comment
 
 	if !m.pr.Data.IsEnriched {
 		return bodyStyle.Render("Loading...")
 	}
+
+	activities := m.cachedActivities(width)
+	cacheKey, canCacheBody := m.activityBodyCacheKey(m.activityCache.fingerprint)
+	if canCacheBody {
+		if body, ok := m.activityBodyCache[cacheKey]; ok {
+			m.activityFocusTargets = m.cachedActivityFocusTargets(activities)
+			return body
+		}
+	}
+
+	m.activityFocusTargets = nil
+	var renderedActivities []string
+	if len(activities) == 0 {
+		renderedActivities = append(renderedActivities, renderEmptyState())
+	} else {
+		for _, activity := range activities {
+			if activity.FocusTarget >= 0 {
+				m.activityFocusTargets = append(m.activityFocusTargets, activity.FocusTarget)
+			}
+			renderedActivities = append(renderedActivities, m.renderCachedActivity(activity))
+		}
+	}
+	m.activityFocusTargets = append(m.activityFocusTargets, focusedNewComment)
+	renderedActivities = append(renderedActivities, m.renderNewCommentCard())
+
+	title := m.ctx.Styles.Common.MainTextStyle.MarginBottom(1).Underline(true).Render(
+		fmt.Sprintf("%s  %d activity items", constants.CommentsIcon, len(activities)),
+	)
+	body := lipgloss.JoinVertical(lipgloss.Left, renderedActivities...)
+	body = lipgloss.JoinVertical(lipgloss.Left, title, body)
+
+	renderedBody := bodyStyle.Render(body)
+	if canCacheBody {
+		if m.activityBodyCache == nil {
+			m.activityBodyCache = map[string]string{}
+		}
+		m.activityBodyCache[cacheKey] = renderedBody
+	}
+	return renderedBody
+}
+
+func (m *Model) cachedActivityBodyView() string {
+	if !m.pr.Data.IsEnriched {
+		return lipgloss.NewStyle().Padding(0, m.ctx.Styles.Sidebar.ContentPadding).Render(m.renderActivity())
+	}
+
+	width := m.getIndentedContentWidth()
+	activities := m.cachedActivities(width)
+	cacheKey, canCacheBody := m.activityBodyCacheKey(m.activityCache.fingerprint)
+	if canCacheBody {
+		cacheKey = "bodyview:" + cacheKey
+		if body, ok := m.activityBodyCache[cacheKey]; ok {
+			m.activityFocusTargets = m.cachedActivityFocusTargets(activities)
+			return body
+		}
+	}
+
+	body := m.renderActivity()
+	body = lipgloss.NewStyle().Padding(0, m.ctx.Styles.Sidebar.ContentPadding).Render(body)
+	if canCacheBody {
+		if m.activityBodyCache == nil {
+			m.activityBodyCache = map[string]string{}
+		}
+		m.activityBodyCache[cacheKey] = body
+	}
+	return body
+}
+
+func (m *Model) cachedActivities(width int) []cachedActivity {
+	fingerprint := m.activityFingerprint(width)
+	if m.activityCache.width == width && m.activityCache.fingerprint == fingerprint {
+		return m.activityCache.activities
+	}
+
+	markdownRenderer := markdown.GetMarkdownRenderer(max(1, width-4))
+	activities := m.buildCachedActivities(markdownRenderer)
+	m.activityCache = activityRenderCache{
+		width:       width,
+		fingerprint: fingerprint,
+		activities:  activities,
+	}
+	return activities
+}
+
+func (m *Model) buildCachedActivities(markdownRenderer glamour.TermRenderer) []cachedActivity {
+	var activities []cachedActivity
 
 	for i, review := range m.pr.Data.Enriched.ReviewThreads.Nodes {
 		if len(review.Comments.Nodes) == 0 {
@@ -57,31 +150,28 @@ func (m *Model) renderActivity() string {
 			})
 		}
 
-		renderedThread, err := m.renderReviewThread(thread, i == m.focusedThread, markdownRenderer)
+		cachedThread, err := m.cacheReviewThread(thread, markdownRenderer)
 		if err != nil {
 			continue
 		}
-		activities = append(activities, RenderedActivity{
-			UpdatedAt:      thread.UpdatedAt(),
-			RenderedString: renderedThread,
-			FocusTarget:    i,
+		activities = append(activities, cachedActivity{
+			UpdatedAt:   thread.UpdatedAt(),
+			FocusTarget: i,
+			Thread:      &cachedThread,
 		})
 	}
 
 	for _, c := range m.pr.Data.Enriched.Comments.Nodes {
-		comments = append(comments, comment{
+		comment := comment{
 			Author:    c.Author.Login,
 			Body:      c.Body,
 			UpdatedAt: c.UpdatedAt,
-		})
-	}
-
-	for _, comment := range comments {
+		}
 		renderedComment, err := m.renderComment(comment, markdownRenderer)
 		if err != nil {
 			continue
 		}
-		activities = append(activities, RenderedActivity{
+		activities = append(activities, cachedActivity{
 			UpdatedAt:      comment.UpdatedAt,
 			RenderedString: renderedComment,
 			FocusTarget:    unfocusedActivity,
@@ -89,62 +179,127 @@ func (m *Model) renderActivity() string {
 	}
 
 	for _, review := range m.pr.Data.Primary.Reviews.Nodes {
-		renderedReview, err := m.renderReview(review, markdownRenderer)
+		body, err := markdownRenderer.Render(review.Body)
 		if err != nil {
 			continue
 		}
-		activities = append(activities, RenderedActivity{
-			UpdatedAt:      review.UpdatedAt,
-			RenderedString: renderedReview,
-			FocusTarget:    unfocusedActivity,
+		header := m.renderReviewHeader(review)
+		activities = append(activities, cachedActivity{
+			UpdatedAt:   review.UpdatedAt,
+			FocusTarget: unfocusedActivity,
+			RenderedCard: m.renderActivityCard(
+				m.getIndentedContentWidth(),
+				m.reviewBorderColor(review.State),
+				header,
+				body,
+			),
 		})
 	}
 
-	// Sort oldest first.
 	sort.Slice(activities, func(i, j int) bool {
 		return activities[i].UpdatedAt.Before(activities[j].UpdatedAt)
 	})
-
-	m.focusedBottom = 0
-	m.activityFocusTargets = nil
-	var renderedActivities []string
-	focusedActivity := -1
-	if len(activities) == 0 {
-		renderedActivities = append(renderedActivities, renderEmptyState())
-	} else {
-		for i, activity := range activities {
-			if activity.FocusTarget >= 0 {
-				m.activityFocusTargets = append(m.activityFocusTargets, activity.FocusTarget)
-			}
-			if activity.FocusTarget != unfocusedActivity && activity.FocusTarget == m.focusedThread {
-				focusedActivity = i
-			}
-			renderedActivities = append(renderedActivities, activity.RenderedString)
-		}
-	}
-	m.activityFocusTargets = append(m.activityFocusTargets, focusedNewComment)
-	renderedActivities = append(renderedActivities, m.renderNewCommentCard())
-	if m.IsNewCommentFocused() {
-		focusedActivity = len(renderedActivities) - 1
-	}
-
-	title := m.ctx.Styles.Common.MainTextStyle.MarginBottom(1).Underline(true).Render(
-		fmt.Sprintf("%s  %d activity items", constants.CommentsIcon, len(activities)),
-	)
-	m.setFocusedActivityBottom(title, renderedActivities, focusedActivity)
-	body := lipgloss.JoinVertical(lipgloss.Left, renderedActivities...)
-	body = lipgloss.JoinVertical(lipgloss.Left, title, body)
-
-	return bodyStyle.Render(body)
+	return activities
 }
 
-func (m *Model) setFocusedActivityBottom(title string, activities []string, focusedActivity int) {
-	if focusedActivity < 0 || focusedActivity >= len(activities) {
-		return
+func (m *Model) renderCachedActivity(activity cachedActivity) string {
+	if activity.Thread != nil {
+		thread := activity.Thread
+		body := thread.Body
+		if activity.FocusTarget == m.focusedThread {
+			if m.editor.Mode() == cmpcontroller.ModeThreadComment {
+				border := m.ctx.Theme.WarningText
+				body = lipgloss.JoinVertical(
+					lipgloss.Left,
+					body,
+					lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintBorder).Render("─"),
+					m.renderEmbeddedActivityEditor(thread.Width),
+				)
+				return m.renderActivityCard(thread.Width, border, thread.Header, body)
+			}
+			return thread.FocusedCard
+		}
+		return thread.UnfocusedCard
 	}
 
-	contentThroughFocused := lipgloss.JoinVertical(lipgloss.Left, activities[:focusedActivity+1]...)
-	m.focusedBottom = lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, title, contentThroughFocused))
+	if activity.RenderedCard != "" {
+		return activity.RenderedCard
+	}
+
+	return activity.RenderedString
+}
+
+func (m *Model) activityBodyCacheKey(fingerprint string) (string, bool) {
+	if m.editor.Mode() != cmpcontroller.ModeNone {
+		return "", false
+	}
+	return fmt.Sprintf("%s|focus:%d", fingerprint, m.focusedThread), true
+}
+
+func (m *Model) cachedActivityFocusTargets(activities []cachedActivity) []int {
+	targets := make([]int, 0, len(activities)+1)
+	for _, activity := range activities {
+		if activity.FocusTarget >= 0 {
+			targets = append(targets, activity.FocusTarget)
+		}
+	}
+	return append(targets, focusedNewComment)
+}
+
+func (m *Model) activityFingerprint(width int) string {
+	if m.pr == nil || m.pr.Data == nil || !m.pr.Data.IsEnriched {
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "w:%d|url:%s|", width, m.pr.Data.Primary.Url)
+	for _, thread := range m.pr.Data.Enriched.ReviewThreads.Nodes {
+		fmt.Fprintf(
+			&b,
+			"t:%s:%t:%t:%s:%d:%d|",
+			thread.Id,
+			thread.IsOutdated,
+			thread.IsResolved,
+			thread.Path,
+			thread.Line,
+			len(thread.Comments.Nodes),
+		)
+		for _, comment := range thread.Comments.Nodes {
+			fmt.Fprintf(
+				&b,
+				"tc:%s:%s:%d:%d|",
+				comment.Author.Login,
+				comment.UpdatedAt.Format(time.RFC3339Nano),
+				len(comment.DiffHunk),
+				len(comment.Body),
+			)
+		}
+	}
+	for _, comment := range m.pr.Data.Enriched.Comments.Nodes {
+		fmt.Fprintf(
+			&b,
+			"c:%s:%s:%d|",
+			comment.Author.Login,
+			comment.UpdatedAt.Format(time.RFC3339Nano),
+			len(comment.Body),
+		)
+	}
+	for _, review := range m.pr.Data.Primary.Reviews.Nodes {
+		fmt.Fprintf(
+			&b,
+			"r:%s:%s:%s:%d|",
+			review.Author.Login,
+			review.State,
+			review.UpdatedAt.Format(time.RFC3339Nano),
+			len(review.Body),
+		)
+	}
+	return b.String()
+}
+
+func (m *Model) invalidateActivityCache() {
+	m.activityCache = activityRenderCache{}
+	m.activityBodyCache = nil
 }
 
 func renderEmptyState() string {
@@ -222,42 +377,17 @@ func (m *Model) renderComment(
 	), err
 }
 
-func (m *Model) renderReviewThread(
+func (m *Model) cacheReviewThread(
 	thread reviewThread,
-	isFocused bool,
 	markdownRenderer glamour.TermRenderer,
-) (string, error) {
+) (cachedReviewThread, error) {
 	width := m.getIndentedContentWidth()
 	if len(thread.Comments) == 0 {
-		return "", nil
+		return cachedReviewThread{}, nil
 	}
 
-	var badges []string
-	if isFocused {
-		badges = append(badges, "focused")
-	}
-	badges = append(badges, fmt.Sprintf("%d comments", len(thread.Comments)))
-	if thread.IsResolved {
-		badges = append(badges, m.ctx.Styles.Common.SuccessGlyph+" resolved")
-	}
-	if thread.IsOutdated {
-		badges = append(badges, "outdated")
-	}
-
-	header := lipgloss.JoinVertical(
-		lipgloss.Left,
-		lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			m.ctx.Styles.Common.CommentGlyph,
-			" ",
-			m.ctx.Styles.Common.MainTextStyle.Render("Review thread"),
-			" ",
-			lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(joinMetadata(badges)),
-		),
-		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
-			fmt.Sprintf("%s#l%d", thread.Path, thread.Line),
-		),
-	)
+	header := m.renderReviewThreadHeader(thread, false)
+	focusedHeader := m.renderReviewThreadHeader(thread, true)
 
 	var renderedComments []string
 	if preview := m.renderReviewDiffPreview(thread.Id, thread.Path, thread.DiffHunk, max(1, width-4)); preview != "" {
@@ -271,7 +401,7 @@ func (m *Model) renderReviewThread(
 		}
 		renderedComment, err := m.renderThreadComment(comment, markdownRenderer)
 		if err != nil {
-			return "", err
+			return cachedReviewThread{}, err
 		}
 
 		if i > 0 {
@@ -281,24 +411,46 @@ func (m *Model) renderReviewThread(
 		}
 		renderedComments = append(renderedComments, renderedComment)
 	}
-	if isFocused && m.editor.Mode() == cmpcontroller.ModeThreadComment {
-		renderedComments = append(renderedComments, lipgloss.NewStyle().
-			Foreground(m.ctx.Theme.FaintBorder).
-			Render("─"))
-		renderedComments = append(renderedComments, m.renderEmbeddedActivityEditor(width))
-	}
 
-	border := m.ctx.Theme.SecondaryBorder
+	body := lipgloss.JoinVertical(lipgloss.Left, renderedComments...)
+	return cachedReviewThread{
+		UnfocusedCard: m.renderActivityCard(width, m.ctx.Theme.SecondaryBorder, header, body),
+		FocusedCard:   m.renderActivityCard(width, m.ctx.Theme.WarningText, focusedHeader, body),
+		Header:        focusedHeader,
+		Body:          body,
+		Width:         width,
+	}, nil
+}
+
+func (m *Model) renderReviewThreadHeader(thread reviewThread, isFocused bool) string {
+	var badges []string
 	if isFocused {
-		border = m.ctx.Theme.WarningText
+		badges = append(badges, "focused")
+	}
+	badges = append(badges, fmt.Sprintf("%d comments", len(thread.Comments)))
+	if thread.IsResolved {
+		badges = append(badges, m.ctx.Styles.Common.SuccessGlyph+" resolved")
+	} else {
+		badges = append(badges, m.ctx.Styles.Common.UnresolvedGlyph+" unresolved")
+	}
+	if thread.IsOutdated {
+		badges = append(badges, "outdated")
 	}
 
-	return m.renderActivityCard(
-		width,
-		border,
-		header,
-		lipgloss.JoinVertical(lipgloss.Left, renderedComments...),
-	), nil
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.ctx.Styles.Common.CommentGlyph,
+			" ",
+			m.ctx.Styles.Common.MainTextStyle.Render("Review thread"),
+			" ",
+			lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(joinMetadata(badges)),
+		),
+		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
+			fmt.Sprintf("%s#l%d", thread.Path, thread.Line),
+		),
+	)
 }
 
 func (m *Model) renderNewCommentCard() string {

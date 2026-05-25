@@ -8,7 +8,7 @@ import (
 
 const (
 	headerHeight    = 4
-	footerHeight    = 1
+	footerHeight    = 0
 	smallScreen     = 130
 	paneTitleHeight = 1
 
