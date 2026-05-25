@@ -176,6 +176,61 @@ func TestPromptConfirmation_NilSection(t *testing.T) {
 	require.Nil(t, cmd, "promptConfirmation should return nil when section is nil")
 }
 
+func TestPROpenCloseAction(t *testing.T) {
+	testCases := []struct {
+		name string
+		pr   any
+		want string
+	}{
+		{
+			name: "open PR closes",
+			pr:   &prrow.Data{Primary: &data.PullRequestData{State: "OPEN"}},
+			want: "close",
+		},
+		{
+			name: "closed PR reopens",
+			pr:   &prrow.Data{Primary: &data.PullRequestData{State: "CLOSED"}},
+			want: "reopen",
+		},
+		{
+			name: "merged PR does nothing",
+			pr:   &prrow.Data{Primary: &data.PullRequestData{State: "MERGED"}},
+			want: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, prOpenCloseAction(tc.pr))
+		})
+	}
+}
+
+func TestIssueOpenCloseAction(t *testing.T) {
+	testCases := []struct {
+		name  string
+		issue any
+		want  string
+	}{
+		{
+			name:  "open issue closes",
+			issue: &data.IssueData{State: "OPEN"},
+			want:  "close",
+		},
+		{
+			name:  "closed issue reopens",
+			issue: &data.IssueData{State: "CLOSED"},
+			want:  "reopen",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, issueOpenCloseAction(tc.issue))
+		})
+	}
+}
+
 func TestNotificationView_SwitchViewWithSKey(t *testing.T) {
 	// Test that forward view navigation switches from Notifications to PRs view
 	cfg, err := config.ParseConfig(config.Location{

@@ -92,15 +92,10 @@ Press <kbd>v</kbd> to approve the PR. When you do, the dashboard uses the
 Press <kbd>W</kbd> to mark the PR as ready for review. When you do, the dashboard uses the
 `gh pr ready` command to convert the PR from draft status to ready for review.
 
-## `x` - Close PR
+## `X` - Toggle PR Open/Closed
 
-Press <kbd>x</kbd> to close the PR. When you do, the dashboard uses the `gh pr close` command to
-close the PR.
-
-## `X` - Reopen PR
-
-Press <kbd>X</kbd> to reopen a closed PR. When you do, the dashboard uses the `gh pr reopen`
-command to reopen the PR.
+Press <kbd>X</kbd> to close an open PR or reopen a closed PR. When you do, the dashboard uses the
+`gh pr close` or `gh pr reopen` command based on the PR's current state.
 
 <Aside type="caution" title="Watch out!">
 **Prior to v3.10.0:** When you use some commands, the dashboard acts immediately and without

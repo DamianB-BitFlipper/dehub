@@ -526,8 +526,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 
 			case key.Matches(msg, keys.PRKeys.Reopen):
-				if currRowData != nil {
-					cmd = m.promptConfirmation(currSection, "reopen")
+				if action := prOpenCloseAction(currRowData); action != "" {
+					cmd = m.promptConfirmation(currSection, action)
 				}
 				return m, cmd
 
@@ -589,8 +589,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 
 			case key.Matches(msg, keys.IssueKeys.Reopen):
-				if currRowData != nil {
-					cmd = m.promptConfirmation(currSection, "reopen")
+				if action := issueOpenCloseAction(currRowData); action != "" {
+					cmd = m.promptConfirmation(currSection, action)
 				}
 				return m, cmd
 
@@ -661,7 +661,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, cmd
 
 						case prview.PRActionReopen:
-							cmd = m.promptConfirmationForNotificationPR("reopen")
+							if action := prOpenCloseAction(m.notificationView.GetSubjectPR()); action != "" {
+								cmd = m.promptConfirmationForNotificationPR(action)
+							}
 							return m, cmd
 
 						case prview.PRActionMerge:
@@ -752,7 +754,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, cmd
 
 					case issueview.IssueActionReopen:
-						cmd = m.promptConfirmationForNotificationIssue("reopen")
+						if action := issueOpenCloseAction(m.notificationView.GetSubjectIssue()); action != "" {
+							cmd = m.promptConfirmationForNotificationIssue(action)
+						}
 						return m, cmd
 					}
 				}
@@ -1224,13 +1228,13 @@ func (m Model) View() tea.View {
 	prCmp := m.prView.ViewCompletions()
 	previewPos := m.ctx.PreviewCursorPosition()
 	if prCmp != "" {
-		y := m.ctx.ScreenHeight - common.FooterHeight - m.prView.InputBoxLineFromBottom() - common.InputBoxHeight - 6
+		y := m.ctx.ScreenHeight - common.FooterHeight - m.prView.InputBoxLineFromBottom() - common.InputBoxHeight - lipgloss.Height(prCmp)
 		layers = append(layers, lipgloss.NewLayer(prCmp).X(previewPos.X+3).Y(y))
 	}
 
 	issueCmp := m.issueSidebar.ViewCompletions()
 	if issueCmp != "" {
-		y := m.ctx.ScreenHeight - common.FooterHeight - m.issueSidebar.InputBoxLineFromButton() - common.InputBoxHeight - 6
+		y := m.ctx.ScreenHeight - common.FooterHeight - m.issueSidebar.InputBoxLineFromButton() - common.InputBoxHeight - lipgloss.Height(issueCmp)
 		layers = append(layers, lipgloss.NewLayer(issueCmp).X(previewPos.X+3).Y(y))
 	}
 	if popup := m.renderCreatePRPopup(); popup != "" {
@@ -1417,7 +1421,8 @@ func (m *Model) updateSection(id int, sType string, msg tea.Msg) (cmd tea.Cmd) {
 
 	currSection := m.getCurrSection()
 	if currSection != nil && id == currSection.GetId() {
-		if _, ok := msg.(prssection.SectionPullRequestsFetchedMsg); ok {
+		switch msg.(type) {
+		case prssection.SectionPullRequestsFetchedMsg, prssection.SectionPullRequestsRefreshedMsg:
 			cmd = m.onViewedRowChanged()
 		}
 	}
@@ -1578,6 +1583,52 @@ func (m *Model) promptConfirmation(currSection section.Section, action string) t
 		return currSection.SetIsPromptConfirmationShown(true)
 	}
 	return nil
+}
+
+func prOpenCloseAction(row any) string {
+	switch pr := row.(type) {
+	case *prrow.Data:
+		if pr == nil || pr.Primary == nil {
+			return ""
+		}
+		return openCloseAction(pr.Primary.State)
+	case prrow.Data:
+		if pr.Primary == nil {
+			return ""
+		}
+		return openCloseAction(pr.Primary.State)
+	case *data.PullRequestData:
+		if pr == nil {
+			return ""
+		}
+		return openCloseAction(pr.State)
+	case data.PullRequestData:
+		return openCloseAction(pr.State)
+	}
+	return ""
+}
+
+func issueOpenCloseAction(row any) string {
+	switch issue := row.(type) {
+	case *data.IssueData:
+		if issue == nil {
+			return ""
+		}
+		return openCloseAction(issue.State)
+	case data.IssueData:
+		return openCloseAction(issue.State)
+	}
+	return ""
+}
+
+func openCloseAction(state string) string {
+	switch state {
+	case "OPEN":
+		return "close"
+	case "CLOSED":
+		return "reopen"
+	}
+	return ""
 }
 
 func (m *Model) syncSidebar() tea.Cmd {

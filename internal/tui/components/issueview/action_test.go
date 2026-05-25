@@ -50,8 +50,7 @@ func TestUpdateReturnsCorrectActions(t *testing.T) {
 		{"unassign key", "A", IssueActionUnassign},
 		{"comment key", "c", IssueActionComment},
 		{"checkout key", "C", IssueActionCheckout},
-		{"close key", "x", IssueActionClose},
-		{"reopen key", "X", IssueActionReopen},
+		{"toggle open/close key", "X", IssueActionReopen},
 	}
 
 	for _, tc := range testCases {
@@ -76,12 +75,23 @@ func TestUpdateReturnsCorrectActions(t *testing.T) {
 }
 
 func TestUpdateReturnsNilActionForUnknownKeys(t *testing.T) {
-	m := newTestModelForAction(t)
-	msg := tea.KeyPressMsg{Text: "z"}
+	testCases := []struct {
+		name string
+		msg  tea.KeyPressMsg
+	}{
+		{"unknown key", tea.KeyPressMsg{Text: "z"}},
+		{"freed close key", tea.KeyPressMsg{Text: "x"}},
+	}
 
-	_, _, action := m.Update(msg)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModelForAction(t)
 
-	require.Nil(t, action, "expected nil action for unknown key")
+			_, _, action := m.Update(tc.msg)
+
+			require.Nil(t, action, "expected nil action for unknown key")
+		})
+	}
 }
 
 func TestUpdateReturnsNilActionWhenCommenting(t *testing.T) {
@@ -113,7 +123,7 @@ func TestUpdateReturnsNilActionWhenAssigning(t *testing.T) {
 	cmd := m.SetIsAssigning(true)
 
 	require.NotNil(t, cmd)
-	msg := tea.KeyPressMsg{Text: "x"} // close key
+	msg := tea.KeyPressMsg{Text: "X"} // toggle open/close key
 
 	_, _, action := m.Update(msg)
 
@@ -125,7 +135,7 @@ func TestUpdateReturnsNilActionWhenUnassigning(t *testing.T) {
 	cmd := m.SetIsUnassigning(true)
 
 	require.NotNil(t, cmd)
-	msg := tea.KeyPressMsg{Text: "X"} // reopen key
+	msg := tea.KeyPressMsg{Text: "X"} // toggle open/close key
 
 	_, _, action := m.Update(msg)
 

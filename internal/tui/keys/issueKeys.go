@@ -44,12 +44,11 @@ var IssueKeys = IssueKeyMap{
 		key.WithHelp("C", "checkout"),
 	),
 	Close: key.NewBinding(
-		key.WithKeys("x"),
-		key.WithHelp("x", "close"),
+		key.WithHelp("", "close"),
 	),
 	Reopen: key.NewBinding(
 		key.WithKeys("X"),
-		key.WithHelp("X", "reopen"),
+		key.WithHelp("X", "toggle open/close"),
 	),
 	ToggleSmartFiltering: key.NewBinding(
 		key.WithKeys("t"),

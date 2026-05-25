@@ -457,12 +457,15 @@ func (e EnrichedPullRequestData) ToPullRequestData() PullRequestData {
 		HeadRef:           e.HeadRef,
 		Repository:        e.Repository,
 		Assignees:         e.Assignees,
+		Reviews:           e.Reviews,
+		ReviewRequests:    e.ReviewRequests,
+		Comments:          Comments{TotalCount: int(e.Comments.TotalCount)},
+		ReviewThreads:     ReviewThreads{TotalCount: len(e.ReviewThreads.Nodes)},
 		IsDraft:           e.IsDraft,
 		Labels:            e.Labels,
 		Files:             e.Files,
-		// Note: Comments, ReviewThreads, Reviews, ReviewRequests, Commits
-		// have different types in EnrichedPullRequestData vs PullRequestData
-		// We leave them as zero values since the enriched data will be used instead
+		// Note: Commits has a different type in EnrichedPullRequestData vs PullRequestData.
+		// Callers that already have primary data should preserve it when needed.
 	}
 }
 

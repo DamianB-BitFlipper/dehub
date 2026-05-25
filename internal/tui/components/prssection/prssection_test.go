@@ -166,6 +166,76 @@ func TestMergeRefreshedPRsPreservesEnrichedData(t *testing.T) {
 	require.Equal(t, "enriched title", m.Prs[0].Enriched.Title)
 }
 
+func TestMergeRefreshedPRsInvalidatesStaleEnrichedState(t *testing.T) {
+	url := "https://github.com/owner/repo/pull/1"
+	m := Model{
+		Prs: []prrow.Data{
+			{
+				Primary: &data.PullRequestData{Number: 1, Url: url, State: "OPEN"},
+				IsEnriched: true,
+				Enriched: data.EnrichedPullRequestData{
+					Number: 1,
+					Url:    url,
+					State:  "OPEN",
+				},
+			},
+		},
+	}
+
+	m.mergeRefreshedPRs([]prrow.Data{
+		{Primary: &data.PullRequestData{Number: 1, Url: url, State: "MERGED"}},
+	})
+
+	require.Len(t, m.Prs, 1)
+	require.Equal(t, "MERGED", m.Prs[0].Primary.State)
+	require.False(t, m.Prs[0].IsEnriched)
+}
+
+func TestMergeRefreshedPRsInvalidatesStaleEnrichedReviewDecision(t *testing.T) {
+	url := "https://github.com/owner/repo/pull/1"
+	m := Model{
+		Prs: []prrow.Data{
+			{
+				Primary: &data.PullRequestData{Number: 1, Url: url, ReviewDecision: "REVIEW_REQUIRED"},
+				IsEnriched: true,
+				Enriched: data.EnrichedPullRequestData{
+					Number:         1,
+					Url:            url,
+					ReviewDecision: "REVIEW_REQUIRED",
+				},
+			},
+		},
+	}
+
+	m.mergeRefreshedPRs([]prrow.Data{
+		{Primary: &data.PullRequestData{Number: 1, Url: url, ReviewDecision: "APPROVED"}},
+	})
+
+	require.Len(t, m.Prs, 1)
+	require.Equal(t, "APPROVED", m.Prs[0].Primary.ReviewDecision)
+	require.False(t, m.Prs[0].IsEnriched)
+}
+
+func TestEnrichPRUpdatesPrimaryStateAndReviewDecision(t *testing.T) {
+	url := "https://github.com/owner/repo/pull/1"
+	m := Model{
+		Prs: []prrow.Data{
+			{Primary: &data.PullRequestData{Number: 1, Url: url, State: "OPEN", ReviewDecision: "REVIEW_REQUIRED"}},
+		},
+	}
+
+	m.EnrichPR(data.EnrichedPullRequestData{
+		Number:         1,
+		Url:            url,
+		State:          "MERGED",
+		ReviewDecision: "APPROVED",
+	})
+
+	require.True(t, m.Prs[0].IsEnriched)
+	require.Equal(t, "MERGED", m.Prs[0].Primary.State)
+	require.Equal(t, "APPROVED", m.Prs[0].Primary.ReviewDecision)
+}
+
 func TestLocalSearchFiltersPRsByTitleNumberAndBranch(t *testing.T) {
 	first := data.PullRequestData{Number: 123, Title: "Add math tests", HeadRefName: "feature/math", BaseRefName: "main"}
 	first.Repository.Name = "repo"

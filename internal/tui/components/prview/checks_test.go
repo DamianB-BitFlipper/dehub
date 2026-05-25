@@ -219,6 +219,26 @@ func TestHasPendingChecks(t *testing.T) {
 	require.False(t, completed.HasPendingChecks())
 }
 
+func TestSetEnrichedPRUpdatesPrimaryStateAndReviewDecision(t *testing.T) {
+	m := newTestModelForChecks(t, checksTestOptions{})
+	url := "https://github.com/owner/repo/pull/42"
+	m.pr.Data.Primary.Number = 42
+	m.pr.Data.Primary.Url = url
+	m.pr.Data.Primary.State = "OPEN"
+	m.pr.Data.Primary.ReviewDecision = "REVIEW_REQUIRED"
+
+	m.SetEnrichedPR(data.EnrichedPullRequestData{
+		Number:         42,
+		Url:            url,
+		State:          "MERGED",
+		ReviewDecision: "APPROVED",
+	})
+
+	require.True(t, m.pr.Data.IsEnriched)
+	require.Equal(t, "MERGED", m.pr.Data.Primary.State)
+	require.Equal(t, "APPROVED", m.pr.Data.Primary.ReviewDecision)
+}
+
 func TestRenderChecks_AwaitingApproval(t *testing.T) {
 	// Test that CheckSuites with conclusion: ACTION_REQUIRED are shown
 	// under "Awaiting Approval" section

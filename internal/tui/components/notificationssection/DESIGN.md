@@ -296,8 +296,7 @@ When viewing a PR notification in the preview pane, all PR-specific keybindings 
 | c | Comment |
 | d | View diff |
 | C/Space | Checkout branch |
-| x | Close PR |
-| X | Reopen PR |
+| X | Toggle PR open/closed |
 | W | Mark ready for review |
 | m | Merge PR |
 | u | Update from base branch |
@@ -314,8 +313,7 @@ Similarly, when viewing an Issue notification, Issue-specific keybindings are av
 | a | Assign |
 | A | Unassign |
 | c | Comment |
-| x | Close issue |
-| X | Reopen issue |
+| X | Toggle issue open/closed |
 
 The `?` help display dynamically updates to show the applicable keybindings based on what type of notification content is being viewed.
 
@@ -323,7 +321,7 @@ The `?` help display dynamically updates to show the applicable keybindings base
 
 When viewing a PR or Issue notification, destructive actions (close, reopen, merge, etc.) require confirmation before execution. This uses a footer-based confirmation mechanism separate from the section-level confirmation used in PR/Issue views:
 
-1. User presses action key (e.g., `x` for close)
+1. User presses action key (e.g., `X` to close an open PR)
 2. Footer displays: "Are you sure you want to close PR #123? (y/N)"
 3. User presses `y`, `Y`, or `Enter` to confirm, any other key cancels
 4. Action executes via the `tasks` package (same as PR/Issue views)

@@ -82,8 +82,7 @@ var PRKeys = PRKeyMap{
 		key.WithHelp("C", "checkout"),
 	),
 	Close: key.NewBinding(
-		key.WithKeys("x"),
-		key.WithHelp("x", "close"),
+		key.WithHelp("", "close"),
 	),
 	SummaryViewMore: key.NewBinding(
 		key.WithKeys("e"),
@@ -91,7 +90,7 @@ var PRKeys = PRKeyMap{
 	),
 	Reopen: key.NewBinding(
 		key.WithKeys("X"),
-		key.WithHelp("X", "reopen"),
+		key.WithHelp("X", "toggle open/close"),
 	),
 	Ready: key.NewBinding(
 		key.WithKeys("W"),

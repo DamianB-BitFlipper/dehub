@@ -373,6 +373,9 @@ func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
 			continue
 		}
 
+		primary := data.ToPullRequestData()
+		primary.Commits = m.Prs[i].Primary.Commits
+		m.Prs[i].Primary = &primary
 		m.Prs[i].IsEnriched = true
 		m.Prs[i].Enriched = data
 	}
@@ -391,7 +394,7 @@ func (m *Model) mergeRefreshedPRs(refreshed []prrow.Data) {
 			continue
 		}
 		old, ok := oldByURL[pr.Primary.Url]
-		if !ok || !old.IsEnriched || pr.IsEnriched {
+		if !ok || !old.IsEnriched || pr.IsEnriched || !canPreserveEnrichedPR(old, pr) {
 			continue
 		}
 		refreshed[i].IsEnriched = true
@@ -399,6 +402,22 @@ func (m *Model) mergeRefreshedPRs(refreshed []prrow.Data) {
 	}
 
 	m.Prs = refreshed
+}
+
+func canPreserveEnrichedPR(old, refreshed prrow.Data) bool {
+	if old.Primary == nil || refreshed.Primary == nil {
+		return false
+	}
+	if refreshed.Primary.State != old.Enriched.State {
+		return false
+	}
+	if refreshed.Primary.ReviewDecision != old.Enriched.ReviewDecision {
+		return false
+	}
+	if refreshed.Primary.UpdatedAt.After(old.Enriched.UpdatedAt) {
+		return false
+	}
+	return true
 }
 
 func (m *Model) upsertCreatedPR(created prrow.Data) {

@@ -294,3 +294,40 @@ yes
 @octo `, newInput)
 	require.Equal(t, tea.Position{Y: 0, X: 6}, newCursor)
 }
+
+func TestFilterMatchesSuggestionDetail(t *testing.T) {
+	m := Model{
+		Source: &ListSource{Options: []Suggestion{
+			{Value: "jdoe", Detail: "Jane Doe"},
+			{Value: "jbloggs", Detail: "Joe Bloggs"},
+		}},
+		maxVisible: 4,
+	}
+
+	m.Filter("", Context{Content: "Jane"}, nil)
+
+	require.Equal(t, []Suggestion{{Value: "jdoe", Detail: "Jane Doe"}}, m.filtered)
+}
+
+func TestFilterKeepsAllMatchesSelectable(t *testing.T) {
+	m := Model{
+		Source: &ListSource{Options: []Suggestion{
+			{Value: "user-1"},
+			{Value: "user-2"},
+			{Value: "user-3"},
+			{Value: "user-4"},
+			{Value: "user-5"},
+			{Value: "user-6"},
+		}},
+		maxVisible: 4,
+		visible:    true,
+	}
+
+	m.Filter("", Context{}, nil)
+
+	require.Len(t, m.filtered, 6)
+	for range 4 {
+		m.Next()
+	}
+	require.Equal(t, "user-5", m.Selected())
+}

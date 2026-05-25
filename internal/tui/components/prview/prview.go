@@ -1083,7 +1083,13 @@ func (m *Model) SetSummaryViewLess() {
 }
 
 func (m *Model) SetEnrichedPR(data data.EnrichedPullRequestData) {
+	if m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil {
+		return
+	}
 	if m.pr.Data.Primary.Url == data.Url {
+		primary := data.ToPullRequestData()
+		primary.Commits = m.pr.Data.Primary.Commits
+		m.pr.Data.Primary = &primary
 		m.pr.Data.Enriched = data
 		m.pr.Data.IsEnriched = true
 		m.reviewDiffCache = map[string][]reviewDiffLine{}

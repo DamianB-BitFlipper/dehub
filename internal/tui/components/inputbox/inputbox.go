@@ -30,7 +30,6 @@ type Model struct {
 var inputKeys = []key.Binding{
 	key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("Ctrl+d", "submit")),
 	key.NewBinding(key.WithKeys("ctrl+c", "esc"), key.WithHelp("Ctrl+c/esc", "cancel")),
-	fuzzyselect.ToggleSuggestions,
 }
 
 const DefaultInputHeight = 5
@@ -143,20 +142,6 @@ func (m Model) AutocompleteItemsToExclude() []string {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Allow toggling suggestions at any time
-		if m.fzfSelect != nil && key.Matches(msg, fuzzyselect.ToggleSuggestions) {
-			if m.fzfSelect.IsVisible() {
-				m.fzfSelect.Suppress()
-				return m, nil
-			}
-
-			m.fzfSelect.Unsuppress()
-			currentContext := m.CurrentAutocompleteContext()
-			m.fzfSelect.Filter(m.Value(), currentContext, m.AutocompleteItemsToExclude())
-			m.fzfSelect.Show()
-			return m, nil
-		}
-
 		// Allow navigation/selection even if the popup is hidden (as long as there are filtered results)
 		if m.fzfSelect != nil &&
 			(m.fzfSelect.IsVisible() || m.fzfSelect.HasSuggestions()) {

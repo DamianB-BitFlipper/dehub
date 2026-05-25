@@ -32,7 +32,7 @@ type suggestionList struct {
 }
 
 func (s suggestionList) String(i int) string {
-	return s.items[i].Value
+	return strings.TrimSpace(s.items[i].Value + " " + s.items[i].Detail)
 }
 
 type FetchState int
@@ -58,16 +58,12 @@ var (
 		key.WithHelp("↑/ctrl+p", "previous"),
 	)
 	SelectKey = key.NewBinding(
-		key.WithKeys("ctrl+y"),
-		key.WithHelp("ctrl+y", "select"),
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "select"),
 	)
 	RefreshSuggestionsKey = key.NewBinding(
 		key.WithKeys("ctrl+f"),
 		key.WithHelp("ctrl+f", "refresh"),
-	)
-	ToggleSuggestions = key.NewBinding(
-		key.WithKeys("ctrl+h"),
-		key.WithHelp("ctrl+h", "toggle"),
 	)
 )
 
@@ -75,14 +71,14 @@ type keyMap struct{}
 
 func (km keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
-		NextKey, PrevKey, SelectKey, RefreshSuggestionsKey, ToggleSuggestions,
+		NextKey, PrevKey, SelectKey, RefreshSuggestionsKey,
 	}
 }
 
 func (km keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{NextKey, PrevKey, SelectKey},
-		{RefreshSuggestionsKey, ToggleSuggestions},
+		{RefreshSuggestionsKey},
 	}
 }
 
@@ -156,9 +152,7 @@ func (m *Model) Filter(input string, cmpCtx Context, excludeItems []string) {
 	}
 	if cmpCtx.Content == "" || len(filteredSuggestions) == 0 {
 		m.filtered = filteredSuggestions
-		if len(m.filtered) > m.maxVisible {
-			m.filtered = m.filtered[:m.maxVisible]
-		}
+		m.clampSelected()
 		return
 	}
 
@@ -167,13 +161,23 @@ func (m *Model) Filter(input string, cmpCtx Context, excludeItems []string) {
 	matches := fuzzy.FindFrom(cmpCtx.Content, list)
 	log.Debug("fuzzyselect.Filter matches", "ctx", cmpCtx, "len(matches)", len(matches))
 
-	// Collect matched items up to maxResults
-	m.filtered = make([]Suggestion, 0, m.maxVisible)
+	m.filtered = make([]Suggestion, 0, len(matches))
 	for _, match := range matches {
-		if len(m.filtered) >= m.maxVisible {
-			break
-		}
 		m.filtered = append(m.filtered, filteredSuggestions[match.Index])
+	}
+	m.clampSelected()
+}
+
+func (m *Model) clampSelected() {
+	if len(m.filtered) == 0 {
+		m.selected = 0
+		return
+	}
+	if m.selected >= len(m.filtered) {
+		m.selected = len(m.filtered) - 1
+	}
+	if m.selected < 0 {
+		m.selected = 0
 	}
 }
 
@@ -268,6 +272,13 @@ func (m *Model) View() string {
 	if numRows <= 0 {
 		numRows = numVisible
 	}
+	start := 0
+	if numRows > 0 && m.selected >= numRows {
+		start = m.selected - numRows + 1
+	}
+	if maxStart := max(0, len(m.filtered)-numRows); start > maxStart {
+		start = maxStart
+	}
 
 	var b strings.Builder
 
@@ -280,8 +291,9 @@ func (m *Model) View() string {
 	var rows []string
 	selectedBgStyle := lipgloss.NewStyle().Background(m.ctx.Theme.SelectedBackground)
 	maxRowWidth := m.width
-	for i := 0; i < numRows; i++ {
-		if i >= numVisible {
+	for rowIndex := 0; rowIndex < numRows; rowIndex++ {
+		i := start + rowIndex
+		if i >= len(m.filtered) || rowIndex >= numVisible {
 			continue
 		}
 
@@ -290,7 +302,7 @@ func (m *Model) View() string {
 		detail := suggestion.Detail
 
 		bg := lipgloss.NewStyle()
-		selected := i < numVisible && i == m.selected
+		selected := i == m.selected
 		if selected {
 			bg = selectedBgStyle
 		}
@@ -303,7 +315,7 @@ func (m *Model) View() string {
 		)
 
 		row := ""
-		if i < numVisible && i == m.selected {
+		if selected {
 			char := selectedPrefix
 			row = utils.RemoveLastReset(
 				char + m.styles.SelectedStyle.Render(rowText),
@@ -319,9 +331,10 @@ func (m *Model) View() string {
 		)
 	}
 
-	if m.selected < len(rows) {
-		rows[m.selected] = selectedBgStyle.Width(maxRowWidth).
-			Render(rows[m.selected])
+	selectedRow := m.selected - start
+	if selectedRow >= 0 && selectedRow < len(rows) {
+		rows[selectedRow] = selectedBgStyle.Width(maxRowWidth).
+			Render(rows[selectedRow])
 	}
 	if len(rows) > 0 {
 		b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))

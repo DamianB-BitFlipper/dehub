@@ -372,7 +372,7 @@ func (c *Controller) resetAutocompleteState() {
 
 func (c Controller) usesAutocomplete() bool {
 	switch c.mode {
-	case ModeComment, ModeThreadComment, ModeApprove, ModeAssign, ModeLabel, ModeSearch:
+	case ModeComment, ModeThreadComment, ModeApprove, ModeAssign, ModeRequestReview, ModeLabel, ModeSearch:
 		return true
 	default:
 		return false

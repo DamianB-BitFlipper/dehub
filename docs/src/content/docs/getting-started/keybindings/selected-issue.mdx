@@ -64,36 +64,21 @@ If no local path is configured for the repository, the command will fail with an
 Press <kbd>s</kbd> to cycle the currently loaded issues between sorting by latest modified and
 sorting by created at, newest to oldest.
 
-## `x` - Close Issue
+## `X` - Toggle Issue Open/Closed
 
-Press <kbd>x</kbd> to close the issue. When you do, the dashboard uses the `gh issue close` command
-to close the issue.
+Press <kbd>X</kbd> to close an open issue or reopen a closed issue. When you do, the dashboard uses
+the `gh issue close` or `gh issue reopen` command based on the issue's current state.
 
 <Aside type="caution" title="Watch out!">
-**Prior to v3.10.0:** When you use this command, the dashboard closes the issue immediately and
+**Prior to v3.10.0:** When you use this command, the dashboard changes the issue state immediately and
 without prompting for confirmation. Only use this command when you're sure you
-want to close the issue.
+want to change the issue's state.
 
 **Since v3.10.0:** When you use this command, the dashboard displays a confirmation prompt and
-closes the issue only after you approve the action.
+changes the issue state only after you approve the action.
 
 This command doesn't support closing the issue with a comment. If you want to
 add a comment that explains why you're closing the issue, use the
 [comment](#c---comment-on-issue) command before or after you use this one.
-
-</Aside>
-
-## `X` - Reopen Issue
-
-Press <kbd>X</kbd> to reopen a closed issue. When you do, the dashboard uses the `gh issue reopen`
-command to reopen the issue.
-
-<Aside type="caution" title="Watch out!">
-**Prior to v3.10.0:** When you use this command, the dashboard reopens the issue immediately and
-without prompting for confirmation. Only use this command when you're sure you
-want to reopen the closed issue.
-
-**Since v3.10.0:** When you use this command, the dashboard displays a confirmation prompt and
-reopens the issue only after you approve the action.
 
 </Aside>

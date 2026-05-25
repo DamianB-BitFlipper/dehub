@@ -54,9 +54,8 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 		{"comment key", 'c', PRActionComment},
 		{"diff key", 'd', PRActionDiff},
 		{"checkout key C", 'C', PRActionCheckout},
-		{"close key", 'x', PRActionClose},
 		{"ready key", 'W', PRActionReady},
-		{"reopen key", 'X', PRActionReopen},
+		{"toggle open/close key", 'X', PRActionReopen},
 		{"merge key", 'm', PRActionMerge},
 		{"update key", 'u', PRActionUpdate},
 		{"summary view more key", 'e', PRActionSummaryViewMore},
@@ -87,11 +86,21 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 }
 
 func TestMsgToActionReturnsNilForUnknownKeys(t *testing.T) {
-	msg := tea.KeyPressMsg{Text: "q"}
+	testCases := []struct {
+		name string
+		msg  tea.KeyPressMsg
+	}{
+		{"unknown key", tea.KeyPressMsg{Text: "q"}},
+		{"freed close key", tea.KeyPressMsg{Code: 'x'}},
+	}
 
-	action := MsgToAction(msg)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			action := MsgToAction(tc.msg)
 
-	require.Nil(t, action, "expected nil action for unknown key")
+			require.Nil(t, action, "expected nil action for unknown key")
+		})
+	}
 }
 
 func TestIsTextInputBoxFocusedWhenCommenting(t *testing.T) {
