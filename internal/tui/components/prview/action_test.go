@@ -50,7 +50,6 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 	}{
 		{"approve key", 'v', PRActionApprove},
 		{"assign key", 'a', PRActionAssign},
-		{"unassign key", 'A', PRActionUnassign},
 		{"comment key", 'c', PRActionComment},
 		{"diff key", 'd', PRActionDiff},
 		{"checkout key C", 'C', PRActionCheckout},
@@ -61,6 +60,9 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 		{"update key", 'u', PRActionUpdate},
 		{"summary view more key", 'e', PRActionSummaryViewMore},
 		{"approve workflows key", 'V', PRActionApproveWorkflows},
+		{"previous review thread key", '[', PRActionPrevReviewThread},
+		{"next review thread key", ']', PRActionNextReviewThread},
+		{"toggle review thread key", 'z', PRActionToggleReviewThread},
 	}
 
 	for _, tc := range testCases {
@@ -84,7 +86,7 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 }
 
 func TestMsgToActionReturnsNilForUnknownKeys(t *testing.T) {
-	msg := tea.KeyPressMsg{Text: "z"}
+	msg := tea.KeyPressMsg{Text: "q"}
 
 	action := MsgToAction(msg)
 
@@ -127,18 +129,6 @@ func TestIsTextInputBoxFocusedWhenAssigning(t *testing.T) {
 	)
 }
 
-func TestIsTextInputBoxFocusedWhenUnassigning(t *testing.T) {
-	m := newTestModelForAction(t)
-	cmd := m.SetIsUnassigning(true)
-
-	require.NotNil(t, cmd)
-	require.True(
-		t,
-		m.IsTextInputBoxFocused(),
-		"expected text input box focused when in unassigning mode",
-	)
-}
-
 func TestUpdateHandlesSidebarTabNavigation(t *testing.T) {
 	t.Run("prev sidebar tab", func(t *testing.T) {
 		m := newTestModelForAction(t)
@@ -171,7 +161,6 @@ func TestPRActionTypes(t *testing.T) {
 		PRActionNone,
 		PRActionApprove,
 		PRActionAssign,
-		PRActionUnassign,
 		PRActionLabel,
 		PRActionComment,
 		PRActionDiff,
@@ -193,6 +182,19 @@ func TestPRActionTypes(t *testing.T) {
 
 	// Verify PRActionNone is zero value
 	require.Equal(t, PRActionType(0), PRActionNone, "PRActionNone should be zero value")
+}
+
+func TestAssigneeChanges(t *testing.T) {
+	m := newTestModelForAction(t)
+	m.pr.Data.Primary.Assignees.Nodes = []data.Assignee{
+		{Login: "alice"},
+		{Login: "bob"},
+	}
+
+	added, removed := m.assigneeChanges([]string{"alice", "carol", "carol"})
+
+	require.Equal(t, []string{"carol"}, added)
+	require.Equal(t, []string{"bob"}, removed)
 }
 
 func TestMsgToActionWithReboundKeys(t *testing.T) {

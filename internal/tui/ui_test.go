@@ -1228,6 +1228,132 @@ func TestSyncSidebar_NoOpWhenSidebarClosed(t *testing.T) {
 	})
 }
 
+func TestPRInputFocusedPageKeysScrollSidebar(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config:            &cfg,
+		View:              config.PRsView,
+		ScreenWidth:       120,
+		ScreenHeight:      40,
+		MainContentHeight: 10,
+		StartTask:         func(task context.Task) tea.Cmd { return nil },
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+	markdown.InitializeMarkdownStyle(true)
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	sidebarModel.UpdateProgramContext(ctx)
+	sidebarModel.SetContent(strings.Repeat("line\n", 100))
+	sidebarModel.ScrollToOffset(20)
+
+	prViewModel := prview.NewModel(ctx)
+	prViewModel.SetRow(&prrow.Data{Primary: &data.PullRequestData{}})
+	cmd := prViewModel.SetIsCommenting(true)
+	require.NotNil(t, cmd)
+	require.True(t, prViewModel.IsTextInputBoxFocused())
+
+	m := Model{
+		ctx:     ctx,
+		keys:    keys.Keys,
+		prView:  prViewModel,
+		sidebar: sidebarModel,
+	}
+
+	initialOffset := m.sidebar.YOffset()
+	newModel, _ := m.Update(tea.KeyPressMsg{Text: "ctrl+up"})
+	m = newModel.(Model)
+	require.Less(t, m.sidebar.YOffset(), initialOffset)
+
+	initialOffset = m.sidebar.YOffset()
+	newModel, _ = m.Update(tea.KeyPressMsg{Text: "ctrl+down"})
+	m = newModel.(Model)
+	require.Greater(t, m.sidebar.YOffset(), initialOffset)
+}
+
+func TestOpenPRCommentInputNoScrollPreservesSidebarOffset(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config:       &cfg,
+		View:         config.PRsView,
+		ScreenWidth:  120,
+		ScreenHeight: 40,
+		StartTask:    func(task context.Task) tea.Cmd { return nil },
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+	markdown.InitializeMarkdownStyle(true)
+
+	updatedAt := time.Now()
+	comments := make([]data.Comment, 0, 40)
+	for i := range 40 {
+		comment := data.Comment{
+			Body:      strings.Repeat("comment body\n", 3),
+			UpdatedAt: updatedAt.Add(time.Duration(i) * time.Minute),
+		}
+		comment.Author.Login = "alice"
+		comments = append(comments, comment)
+	}
+
+	pr := prrow.Data{
+		Primary: &data.PullRequestData{Title: "test", State: "OPEN"},
+		Enriched: data.EnrichedPullRequestData{
+			Title: "test",
+			State: "OPEN",
+			Comments: data.CommentsWithBody{
+				Nodes: comments,
+			},
+		},
+		IsEnriched: true,
+	}
+	prSection := prssection.NewModel(
+		0,
+		ctx,
+		config.PrsSectionConfig{Title: "Test", Filters: "is:open"},
+		time.Now(),
+		time.Now(),
+	)
+	prSection.Prs = []prrow.Data{pr}
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	sidebarModel.UpdateProgramContext(ctx)
+	sidebarModel.SetContent(strings.Repeat("line\n", 100))
+	sidebarModel.ScrollToOffset(20)
+	prViewModel := prview.NewModel(ctx)
+	prViewModel.UpdateProgramContext(ctx)
+
+	m := Model{
+		ctx:           ctx,
+		keys:          keys.Keys,
+		prs:           []section.Section{&prSection},
+		sidebar:       sidebarModel,
+		footer:        footer.NewModel(ctx),
+		tabs:          tabs.NewModel(ctx),
+		prView:        prViewModel,
+		issueSidebar:  issueview.NewModel(ctx),
+		branchSidebar: branchsidebar.NewModel(ctx),
+	}
+	m.prView.GoToActivityTab()
+	m.prView.SetRow(&pr)
+
+	initialOffset := m.sidebar.YOffset()
+	_ = m.openSidebarForInputNoScroll(m.prView.SetIsCommenting)
+	require.True(t, m.prView.IsTextInputBoxFocused())
+	require.Equal(t, initialOffset, m.sidebar.YOffset())
+}
+
 func TestSyncMainContentDimensions_BottomMode(t *testing.T) {
 	tests := []struct {
 		name                  string

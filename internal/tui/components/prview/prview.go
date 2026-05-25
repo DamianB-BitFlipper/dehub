@@ -33,13 +33,17 @@ var (
 )
 
 type Model struct {
-	ctx             *context.ProgramContext
-	sectionId       int
-	pr              *prrow.PullRequest
-	width           int
-	carousel        carousel.Model
-	editor          cmpcontroller.Controller
-	summaryViewMore bool
+	ctx                  *context.ProgramContext
+	sectionId            int
+	sectionType          string
+	pr                   *prrow.PullRequest
+	width                int
+	carousel             carousel.Model
+	editor               cmpcontroller.Controller
+	summaryViewMore      bool
+	focusedThread        int
+	focusedBottom        int
+	activityFocusTargets []int
 }
 
 type WatchReason int
@@ -48,6 +52,11 @@ const (
 	WatchNone WatchReason = iota
 	WatchChecks
 	WatchActivity
+)
+
+const (
+	focusedNewComment = -1
+	unfocusedActivity = -2
 )
 
 var tabs = []string{" Overview", " Activity", " Checks", " Commits", " Files Changed"}
@@ -62,9 +71,10 @@ func NewModel(ctx *context.ProgramContext) Model {
 	cmp := cmpcontroller.New(ctx, inputbox.ModelOpts{TextArea: &ta})
 
 	return Model{
-		pr:       nil,
-		carousel: c,
-		editor:   cmp,
+		pr:            nil,
+		carousel:      c,
+		editor:        cmp,
+		focusedThread: focusedNewComment,
 	}
 }
 
@@ -79,12 +89,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		sid := tasks.SectionIdentifier{Id: m.sectionId, Type: prssection.SectionType}
+		sid := m.sectionIdentifier()
 
 		switch mode {
 		case cmpcontroller.ModeComment:
 			if len(strings.TrimSpace(value)) != 0 {
 				return m, tasks.CommentOnPR(m.ctx, sid, m.pr.Data.Primary, value)
+			}
+			return m, nil
+
+		case cmpcontroller.ModeThreadComment:
+			thread, ok := m.FocusedReviewThread()
+			if ok && len(strings.TrimSpace(value)) != 0 {
+				return m, tasks.ReplyToReviewThread(m.ctx, sid, m.pr.Data.Primary, thread.Id, value)
 			}
 			return m, nil
 
@@ -96,16 +113,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tasks.ApprovePR(m.ctx, sid, m.pr.Data.Primary, comment)
 
 		case cmpcontroller.ModeAssign:
-			usernames := fuzzyselect.AllWords(value)
-			if len(usernames) > 0 {
-				return m, tasks.AssignPR(m.ctx, sid, m.pr.Data.Primary, usernames)
-			}
-			return m, nil
-
-		case cmpcontroller.ModeUnassign:
-			usernames := fuzzyselect.AllWords(value)
-			if len(usernames) > 0 {
-				return m, tasks.UnassignPR(m.ctx, sid, m.pr.Data.Primary, usernames)
+			added, removed := m.assigneeChanges(fuzzyselect.AllWords(value))
+			if len(added) > 0 || len(removed) > 0 {
+				return m, tasks.AssignPR(m.ctx, sid, m.pr.Data.Primary, added, removed)
 			}
 			return m, nil
 
@@ -139,7 +149,8 @@ func (m Model) View() string {
 		return ""
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		m.HeaderView(),
 		m.BodyView(),
 	)
@@ -153,7 +164,7 @@ func (m Model) HeaderView() string {
 	return m.viewHeader()
 }
 
-func (m Model) BodyView() string {
+func (m *Model) BodyView() string {
 	if !m.hasData() {
 		return ""
 	}
@@ -174,6 +185,10 @@ func (m Model) BodyView() string {
 		body.WriteString(m.renderChangedFiles())
 	}
 
+	if m.editor.Mode() != cmpcontroller.ModeNone && !m.isActivityCommentEditor() {
+		body.WriteString(m.ctx.Styles.Sidebar.InputBox.Render(m.editor.View()))
+	}
+
 	return lipgloss.NewStyle().Padding(0, m.ctx.Styles.Sidebar.ContentPadding).Render(body.String())
 }
 
@@ -189,10 +204,11 @@ func (m *Model) viewHeader() string {
 	header.WriteString("\n\n")
 	header.WriteString(m.renderAuthor())
 	header.WriteString("\n\n")
-	header.WriteString(lipgloss.NewStyle().Width(m.width).
-		Border(lipgloss.NormalBorder(), false, false, true, false).
-		BorderForeground(m.ctx.Theme.FaintBorder).
-		Render(m.carousel.View()),
+	header.WriteString(
+		lipgloss.NewStyle().Width(m.width).
+			Border(lipgloss.NormalBorder(), false, false, true, false).
+			BorderForeground(m.ctx.Theme.FaintBorder).
+			Render(m.carousel.View()),
 	)
 
 	header.WriteString("\n")
@@ -226,10 +242,6 @@ func (m *Model) viewOverviewTab() string {
 	)
 	body.WriteString("\n")
 	body.WriteString(m.renderChecksOverview())
-
-	if m.editor.Mode() != cmpcontroller.ModeNone {
-		body.WriteString(m.ctx.Styles.Sidebar.InputBox.Render(m.editor.View()))
-	}
 
 	return body.String()
 }
@@ -316,7 +328,8 @@ func (m *Model) renderLabels() string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.ctx.Styles.Common.MainTextStyle.Underline(true).Bold(true).Render(
-			fmt.Sprintf("%s Labels", constants.LabelsIcon)),
+			fmt.Sprintf("%s Labels", constants.LabelsIcon),
+		),
 		"",
 		common.RenderLabels(labels, common.LabelOpts{
 			Width:     width,
@@ -334,7 +347,8 @@ func (m *Model) renderRequestedReviewers() string {
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			m.ctx.Styles.Common.MainTextStyle.Underline(true).Bold(true).Render(
-				fmt.Sprintf("%s Reviewers", constants.CodeReviewIcon)),
+				fmt.Sprintf("%s Reviewers", constants.CodeReviewIcon),
+			),
 			"",
 			lipgloss.JoinHorizontal(
 				lipgloss.Top,
@@ -437,7 +451,8 @@ func (m *Model) renderRequestedReviewers() string {
 		}
 		shownReviewers[login] = true
 
-		reviewerStr := lipgloss.JoinHorizontal(lipgloss.Top,
+		reviewerStr := lipgloss.JoinHorizontal(
+			lipgloss.Top,
 			faintStyle.Render(constants.OwnerIcon), " ",
 			faintStyle.Render("@"+login),
 		)
@@ -490,7 +505,8 @@ func (m *Model) renderRequestedReviewers() string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.ctx.Styles.Common.MainTextStyle.Underline(true).Bold(true).Render(
-			fmt.Sprintf("%s Reviewers", constants.CodeReviewIcon)),
+			fmt.Sprintf("%s Reviewers", constants.CodeReviewIcon),
+		),
 		"",
 		strings.Join(rows, "\n"),
 	)
@@ -502,12 +518,15 @@ func (m *Model) renderAuthor() string {
 		authorAssociation = "unknown role"
 	}
 	time := lipgloss.NewStyle().Render(utils.TimeElapsed(m.pr.Data.Primary.CreatedAt))
-	return lipgloss.JoinHorizontal(lipgloss.Top,
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
 		" by ",
 		lipgloss.NewStyle().Foreground(m.ctx.Theme.PrimaryText).Render(
-			lipgloss.NewStyle().Bold(true).Render("@"+m.pr.Data.Primary.Author.Login)),
+			lipgloss.NewStyle().Bold(true).Render("@"+m.pr.Data.Primary.Author.Login),
+		),
 		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
-			lipgloss.JoinHorizontal(lipgloss.Top, " ⋅ ", time, " ago", " ⋅ ")),
+			lipgloss.JoinHorizontal(lipgloss.Top, " ⋅ ", time, " ago", " ⋅ "),
+		),
 		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
 			lipgloss.JoinHorizontal(lipgloss.Top, data.GetAuthorRoleIcon(m.pr.Data.Primary.AuthorAssociation,
 				m.ctx.Theme),
@@ -547,10 +566,12 @@ func (m *Model) renderSummary() string {
 	bodyHeight := lipgloss.Height(rendered)
 	if !m.summaryViewMore && bodyHeight > foldBodyHeight {
 		rendered = lipgloss.NewStyle().MaxHeight(foldBodyHeight).Render(rendered)
-		rendered = lipgloss.JoinVertical(lipgloss.Left,
+		rendered = lipgloss.JoinVertical(
+			lipgloss.Left,
 			rendered,
 			"",
-			lipgloss.PlaceHorizontal(m.getIndentedContentWidth(), lipgloss.Center,
+			lipgloss.PlaceHorizontal(
+				m.getIndentedContentWidth(), lipgloss.Center,
 				lipgloss.JoinHorizontal(
 					lipgloss.Top,
 					lipgloss.NewStyle().Bold(true).Italic(true).Render("Press "),
@@ -564,7 +585,8 @@ func (m *Model) renderSummary() string {
 		)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, title,
+	return lipgloss.JoinVertical(
+		lipgloss.Left, title,
 		lipgloss.NewStyle().
 			Width(width).
 			MaxWidth(width).
@@ -575,13 +597,23 @@ func (m *Model) renderSummary() string {
 
 func (m *Model) SetSectionId(id int) {
 	m.sectionId = id
+	m.sectionType = prssection.SectionType
+}
+
+func (m *Model) SetSection(id int, sectionType string) {
+	m.sectionId = id
+	m.sectionType = sectionType
 }
 
 func (m *Model) SetRow(d *prrow.Data) {
 	if d == nil {
 		m.pr = nil
 	} else {
+		if d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url {
+			m.FocusNewComment()
+		}
 		m.pr = &prrow.PullRequest{Ctx: m.ctx, Data: d}
+		m.clampFocusedReviewThread()
 	}
 }
 
@@ -620,6 +652,19 @@ func (m *Model) IsTextInputBoxFocused() bool {
 	return m.editor.Active()
 }
 
+func (m *Model) isActivityCommentEditor() bool {
+	if !m.IsActivityTab() {
+		return false
+	}
+
+	switch m.editor.Mode() {
+	case cmpcontroller.ModeComment, cmpcontroller.ModeThreadComment:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
 	m.ctx = ctx
 	m.editor.UpdateProgramContext(ctx)
@@ -651,10 +696,38 @@ func (m *Model) SetIsCommenting(isCommenting bool) tea.Cmd {
 		return nil
 	}
 
+	if m.IsActivityTab() && m.HasFocusedReviewThread() {
+		return m.SetIsThreadCommenting(true)
+	}
+
 	m.editor.SetAutocompleteSource(&fuzzyselect.UserMentionSource{WithAtSymbol: true})
 	cmd := m.editor.Enter(cmpcontroller.EnterOptions{
 		Mode:                             cmpcontroller.ModeComment,
 		Prompt:                           constants.CommentPrompt,
+		Repo:                             m.repoRef(),
+		EnterFetch:                       cmpcontroller.FetchSilent,
+		ConfirmDiscardOnCancel:           true,
+		HideAutocompleteWhenContextEmpty: true,
+	})
+	return cmd
+}
+
+func (m *Model) SetIsThreadCommenting(isCommenting bool) tea.Cmd {
+	if m.pr == nil {
+		return nil
+	}
+
+	if !isCommenting {
+		if m.editor.Mode() == cmpcontroller.ModeThreadComment {
+			m.editor.Exit()
+		}
+		return nil
+	}
+
+	m.editor.SetAutocompleteSource(&fuzzyselect.UserMentionSource{WithAtSymbol: true})
+	cmd := m.editor.Enter(cmpcontroller.EnterOptions{
+		Mode:                             cmpcontroller.ModeThreadComment,
+		Prompt:                           constants.ThreadCommentPrompt,
 		Repo:                             m.repoRef(),
 		EnterFetch:                       cmpcontroller.FetchSilent,
 		ConfirmDiscardOnCancel:           true,
@@ -712,55 +785,16 @@ func (m *Model) SetIsAssigning(isAssigning bool) tea.Cmd {
 		return nil
 	}
 
-	initialValue := ""
-	if !m.userAssignedToPr(m.ctx.User) {
-		initialValue = m.ctx.User
-	}
-
 	m.editor.SetAutocompleteSource(&fuzzyselect.UserMentionSource{WithAtSymbol: false})
 	cmd := m.editor.Enter(cmpcontroller.EnterOptions{
 		Mode:                             cmpcontroller.ModeAssign,
-		Prompt:                           constants.AssignPrompt,
-		InitialValue:                     initialValue,
+		Prompt:                           constants.EditAssigneesPrompt,
+		InitialValue:                     strings.Join(m.prAssignees(), "\n"),
 		Repo:                             m.repoRef(),
 		EnterFetch:                       cmpcontroller.FetchSilent,
 		HideAutocompleteWhenContextEmpty: false,
 	})
 	m.editor.ShowCompletions()
-	return cmd
-}
-
-func (m *Model) userAssignedToPr(login string) bool {
-	for _, a := range m.pr.Data.Primary.Assignees.Nodes {
-		if login == a.Login {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Model) GetIsUnassigning() bool {
-	return m.editor.Mode() == cmpcontroller.ModeUnassign
-}
-
-func (m *Model) SetIsUnassigning(isUnassigning bool) tea.Cmd {
-	if m.pr == nil {
-		return nil
-	}
-
-	if !isUnassigning {
-		if m.editor.Mode() == cmpcontroller.ModeUnassign {
-			m.editor.Exit()
-		}
-		return nil
-	}
-
-	cmd := m.editor.Enter(cmpcontroller.EnterOptions{
-		Mode:         cmpcontroller.ModeUnassign,
-		Prompt:       constants.UnassignPrompt,
-		InitialValue: strings.Join(m.prAssignees(), "\n"),
-		Repo:         m.repoRef(),
-	})
 	return cmd
 }
 
@@ -770,6 +804,34 @@ func (m *Model) prAssignees() []string {
 		assignees = append(assignees, n.Login)
 	}
 	return assignees
+}
+
+func (m *Model) assigneeChanges(next []string) ([]string, []string) {
+	current := map[string]bool{}
+	for _, login := range m.prAssignees() {
+		current[login] = true
+	}
+
+	nextSet := map[string]bool{}
+	added := []string{}
+	for _, login := range next {
+		if login == "" || nextSet[login] {
+			continue
+		}
+		nextSet[login] = true
+		if !current[login] {
+			added = append(added, login)
+		}
+	}
+
+	removed := []string{}
+	for _, login := range m.prAssignees() {
+		if !nextSet[login] {
+			removed = append(removed, login)
+		}
+	}
+
+	return added, removed
 }
 
 func (m *Model) GoToFirstTab() {
@@ -794,6 +856,140 @@ func (m Model) SelectedTab() string {
 
 func (m Model) IsActivityTab() bool {
 	return m.carousel.SelectedItem() == tabs[1]
+}
+
+func (m Model) HasFocusedReviewThread() bool {
+	_, ok := m.FocusedReviewThread()
+	return ok
+}
+
+func (m Model) FocusedReviewThread() (*data.ReviewThreadWithComments, bool) {
+	if m.pr == nil || m.pr.Data == nil || !m.pr.Data.IsEnriched {
+		return nil, false
+	}
+	threads := m.pr.Data.Enriched.ReviewThreads.Nodes
+	if m.focusedThread < 0 || m.focusedThread >= len(threads) {
+		return nil, false
+	}
+	if len(threads[m.focusedThread].Comments.Nodes) == 0 {
+		return nil, false
+	}
+
+	return &threads[m.focusedThread], true
+}
+
+func (m *Model) FocusNextReviewThread() bool {
+	return m.focusReviewThread(1)
+}
+
+func (m *Model) FocusPrevReviewThread() bool {
+	return m.focusReviewThread(-1)
+}
+
+func (m Model) FocusedActivityScrollOffset(viewportHeight int) (int, bool) {
+	if m.focusedBottom <= 0 {
+		return 0, false
+	}
+
+	return max(0, m.focusedBottom-viewportHeight), true
+}
+
+func (m *Model) focusReviewThread(delta int) bool {
+	if m.pr == nil || m.pr.Data == nil || !m.pr.Data.IsEnriched {
+		return false
+	}
+	focusTargets := m.activityFocusTargets
+	if len(focusTargets) == 0 {
+		focusTargets = m.activityFocusTargetsFromData()
+	}
+	if len(focusTargets) == 0 {
+		return false
+	}
+
+	current := -1
+	for i, target := range focusTargets {
+		if target == m.focusedThread {
+			current = i
+			break
+		}
+	}
+	if current == -1 {
+		m.focusedThread = focusTargets[0]
+		return true
+	}
+
+	next := current + delta
+	if next < 0 || next >= len(focusTargets) {
+		return false
+	}
+	m.focusedThread = focusTargets[next]
+	return true
+}
+
+func (m Model) activityFocusTargetsFromData() []int {
+	if m.pr == nil || m.pr.Data == nil || !m.pr.Data.IsEnriched {
+		return nil
+	}
+	targets := []int{}
+	for i, thread := range m.pr.Data.Enriched.ReviewThreads.Nodes {
+		if len(thread.Comments.Nodes) > 0 {
+			targets = append(targets, i)
+		}
+	}
+	return append(targets, focusedNewComment)
+}
+
+func (m Model) IsNewCommentFocused() bool {
+	return m.focusedThread == focusedNewComment
+}
+
+func (m *Model) FocusNewComment() {
+	m.focusedThread = focusedNewComment
+}
+
+func (m *Model) SetInitialActivityFocus() {
+	if m.focusedThread == 0 {
+		m.FocusNewComment()
+	}
+}
+
+func (m *Model) ToggleFocusedReviewThreadResolved() tea.Cmd {
+	thread, ok := m.FocusedReviewThread()
+	if !ok || m.pr == nil {
+		return nil
+	}
+
+	sid := m.sectionIdentifier()
+	return tasks.ToggleReviewThreadResolved(
+		m.ctx,
+		sid,
+		m.pr.Data.Primary,
+		thread.Id,
+		thread.IsResolved,
+	)
+}
+
+func (m Model) sectionIdentifier() tasks.SectionIdentifier {
+	sectionType := m.sectionType
+	if sectionType == "" {
+		sectionType = prssection.SectionType
+	}
+	return tasks.SectionIdentifier{Id: m.sectionId, Type: sectionType}
+}
+
+func (m *Model) clampFocusedReviewThread() {
+	if m.pr == nil || m.pr.Data == nil || !m.pr.Data.IsEnriched {
+		m.FocusNewComment()
+		return
+	}
+	threads := m.pr.Data.Enriched.ReviewThreads.Nodes
+	if m.IsNewCommentFocused() {
+		return
+	}
+	if m.focusedThread >= 0 && m.focusedThread < len(threads) && len(threads[m.focusedThread].Comments.Nodes) > 0 {
+		return
+	}
+	m.FocusNewComment()
 }
 
 func (m Model) IsOverviewTab() bool {
@@ -834,6 +1030,7 @@ func (m *Model) SetEnrichedPR(data data.EnrichedPullRequestData) {
 	if m.pr.Data.Primary.Url == data.Url {
 		m.pr.Data.Enriched = data
 		m.pr.Data.IsEnriched = true
+		m.clampFocusedReviewThread()
 	}
 }
 

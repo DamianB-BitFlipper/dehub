@@ -92,7 +92,8 @@ func (m Model) renderContent() string {
 	if m.header != "" {
 		content = append(content, m.header)
 	}
-	content = append(content,
+	content = append(
+		content,
 		m.viewport.View(),
 		m.ctx.Styles.Sidebar.PagerStyle.
 			Render(fmt.Sprintf("%d%%", int(m.viewport.ScrollPercent()*100))),
@@ -135,6 +136,10 @@ func (m *Model) ScrollToBottom() {
 
 func (m *Model) YOffset() int {
 	return m.viewport.YOffset()
+}
+
+func (m *Model) ViewportHeight() int {
+	return m.viewport.Height()
 }
 
 func (m *Model) ScrollToOffset(offset int) {

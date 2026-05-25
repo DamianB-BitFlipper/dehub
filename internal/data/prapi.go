@@ -282,16 +282,18 @@ type Reviews struct {
 }
 
 type ReviewThreadsWithComments struct {
-	Nodes []struct {
-		Id           string
-		IsOutdated   bool
-		IsResolved   bool
-		OriginalLine int
-		StartLine    int
-		Line         int
-		Path         string
-		Comments     ReviewComments `graphql:"comments(first: 20)"`
-	}
+	Nodes []ReviewThreadWithComments
+}
+
+type ReviewThreadWithComments struct {
+	Id           string
+	IsOutdated   bool
+	IsResolved   bool
+	OriginalLine int
+	StartLine    int
+	Line         int
+	Path         string
+	Comments     ReviewComments `graphql:"comments(first: 20)"`
 }
 
 type ChangedFile struct {

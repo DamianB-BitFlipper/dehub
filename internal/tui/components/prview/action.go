@@ -14,7 +14,6 @@ const (
 	PRActionNone PRActionType = iota
 	PRActionApprove
 	PRActionAssign
-	PRActionUnassign
 	PRActionLabel
 	PRActionComment
 	PRActionDiff
@@ -26,6 +25,9 @@ const (
 	PRActionUpdate
 	PRActionSummaryViewMore
 	PRActionApproveWorkflows
+	PRActionPrevReviewThread
+	PRActionNextReviewThread
+	PRActionToggleReviewThread
 )
 
 // PRAction represents an action to be performed on a PR.
@@ -45,8 +47,6 @@ func MsgToAction(msg tea.Msg) *PRAction {
 		return &PRAction{Type: PRActionApprove}
 	case key.Matches(keyMsg, keys.PRKeys.Assign):
 		return &PRAction{Type: PRActionAssign}
-	case key.Matches(keyMsg, keys.PRKeys.Unassign):
-		return &PRAction{Type: PRActionUnassign}
 	case key.Matches(keyMsg, keys.PRKeys.Label):
 		return &PRAction{Type: PRActionLabel}
 	case key.Matches(keyMsg, keys.PRKeys.Comment):
@@ -69,6 +69,12 @@ func MsgToAction(msg tea.Msg) *PRAction {
 		return &PRAction{Type: PRActionSummaryViewMore}
 	case key.Matches(keyMsg, keys.PRKeys.ApproveWorkflows):
 		return &PRAction{Type: PRActionApproveWorkflows}
+	case key.Matches(keyMsg, keys.PRKeys.PrevReviewThread):
+		return &PRAction{Type: PRActionPrevReviewThread}
+	case key.Matches(keyMsg, keys.PRKeys.NextReviewThread):
+		return &PRAction{Type: PRActionNextReviewThread}
+	case key.Matches(keyMsg, keys.PRKeys.ToggleReviewThread):
+		return &PRAction{Type: PRActionToggleReviewThread}
 	}
 
 	return nil

@@ -22,6 +22,7 @@ type Mode int
 const (
 	ModeNone Mode = iota
 	ModeComment
+	ModeThreadComment
 	ModeApprove
 	ModeAssign
 	ModeUnassign
@@ -215,6 +216,9 @@ func (c *Controller) Update(msg tea.Msg) (tea.Cmd, bool) {
 		if !c.Active() {
 			return nil, false
 		}
+		if msg.String() == "ctrl+up" || msg.String() == "ctrl+down" {
+			return nil, false
+		}
 
 		switch {
 		case key.Matches(msg, fuzzyselect.RefreshSuggestionsKey):
@@ -367,7 +371,7 @@ func (c *Controller) resetAutocompleteState() {
 
 func (c Controller) usesAutocomplete() bool {
 	switch c.mode {
-	case ModeComment, ModeApprove, ModeAssign, ModeLabel, ModeSearch:
+	case ModeComment, ModeThreadComment, ModeApprove, ModeAssign, ModeLabel, ModeSearch:
 		return true
 	default:
 		return false

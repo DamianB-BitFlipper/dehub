@@ -35,6 +35,36 @@ func TestApproveWorkflows_TaskConfiguration(t *testing.T) {
 	require.Nil(t, capturedTask.Error)
 }
 
+func TestAssignPR_TaskConfiguration(t *testing.T) {
+	section := SectionIdentifier{Id: 2, Type: "pr"}
+	pr := mockIssue{
+		number:   42,
+		repoName: "owner/repo",
+	}
+
+	task := buildAssignPRTask(section, pr, []string{"alice"}, []string{"bob"})
+
+	require.Equal(t, "pr_assign_42", task.Id)
+	require.Equal(t, []string{
+		"pr", "edit", "42", "-R", "owner/repo",
+		"--add-assignee", "alice",
+		"--remove-assignee", "bob",
+	}, task.Args)
+	require.Equal(t, section, task.Section)
+	require.Equal(t, "Updating assignees for pr #42", task.StartText)
+	require.Equal(t, "Assignees for pr #42 have been updated", task.FinishedText)
+}
+
+func TestAssignPR_UpdateMessage(t *testing.T) {
+	pr := mockIssue{number: 42, repoName: "owner/repo"}
+	task := buildAssignPRTask(SectionIdentifier{Id: 2, Type: "pr"}, pr, []string{"alice"}, []string{"bob"})
+	msg := task.Msg(&exec.Cmd{}, nil).(UpdatePRMsg)
+
+	require.Equal(t, 42, msg.PrNumber)
+	require.Equal(t, "alice", msg.AddedAssignees.Nodes[0].Login)
+	require.Equal(t, "bob", msg.RemovedAssignees.Nodes[0].Login)
+}
+
 func TestTogglePRDraft_TaskConfiguration(t *testing.T) {
 	tests := []struct {
 		name         string

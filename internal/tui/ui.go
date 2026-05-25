@@ -215,12 +215,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.prView.IsTextInputBoxFocused() {
+			if key.Matches(msg, keys.Keys.PageUp) || key.Matches(msg, keys.Keys.PageDown) {
+				m.sidebar, sidebarCmd = m.sidebar.Update(msg)
+				return m, sidebarCmd
+			}
 			m.prView, cmd = m.prView.Update(msg)
 			m.syncSidebar()
 			return m, cmd
 		}
 
 		if m.issueSidebar.IsTextInputBoxFocused() {
+			if key.Matches(msg, keys.Keys.PageUp) || key.Matches(msg, keys.Keys.PageDown) {
+				m.sidebar, sidebarCmd = m.sidebar.Update(msg)
+				return m, sidebarCmd
+			}
 			m.issueSidebar, cmd, _ = m.issueSidebar.Update(msg)
 			m.syncSidebar()
 			return m, cmd
@@ -453,14 +461,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, keys.PRKeys.Assign):
 				return m, m.openSidebarForPRInput(m.prView.SetIsAssigning)
 
-			case key.Matches(msg, keys.PRKeys.Unassign):
-				return m, m.openSidebarForPRInput(m.prView.SetIsUnassigning)
-
 			case key.Matches(msg, keys.PRKeys.Label):
 				return m, m.openSidebarForPRInput(m.prView.SetIsLabeling)
 
 			case key.Matches(msg, keys.PRKeys.Comment):
-				return m, m.openSidebarForPRInput(m.prView.SetIsCommenting)
+				return m, m.openSidebarForInputNoScroll(m.prView.SetIsCommenting)
+
+			case key.Matches(msg, keys.PRKeys.PrevReviewThread),
+				key.Matches(msg, keys.PRKeys.NextReviewThread):
+				if !m.prView.IsActivityTab() {
+					return m, nil
+				}
+				moved := false
+				if key.Matches(msg, keys.PRKeys.PrevReviewThread) {
+					moved = m.prView.FocusPrevReviewThread()
+				} else {
+					moved = m.prView.FocusNextReviewThread()
+				}
+				if !moved {
+					return m, nil
+				}
+				m.syncSidebar()
+				return m, nil
+
+			case key.Matches(msg, keys.PRKeys.ToggleReviewThread):
+				if !m.prView.IsActivityTab() {
+					return m, nil
+				}
+				return m, m.prView.ToggleFocusedReviewThreadResolved()
 
 			case key.Matches(msg, keys.PRKeys.CopyBranch):
 				pr, ok := currRowData.(*prrow.Data)
@@ -587,14 +615,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case prview.PRActionAssign:
 							return m, m.openSidebarForPRInput(m.prView.SetIsAssigning)
 
-						case prview.PRActionUnassign:
-							return m, m.openSidebarForPRInput(m.prView.SetIsUnassigning)
-
 						case prview.PRActionLabel:
 							return m, m.openSidebarForPRInput(m.prView.SetIsLabeling)
 
 						case prview.PRActionComment:
-							return m, m.openSidebarForPRInput(m.prView.SetIsCommenting)
+							return m, m.openSidebarForInputNoScroll(m.prView.SetIsCommenting)
 
 						case prview.PRActionDiff:
 							if pr := m.notificationView.GetSubjectPR(); pr != nil {
@@ -608,7 +633,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case prview.PRActionCheckout:
 							if pr := m.notificationView.GetSubjectPR(); pr != nil {
 								cmd, _ = notificationssection.CheckoutPR(
-									m.ctx, pr.GetNumber(), pr.GetRepoNameWithOwner())
+									m.ctx, pr.GetNumber(), pr.GetRepoNameWithOwner(),
+								)
 							}
 							return m, cmd
 
@@ -641,6 +667,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 						case prview.PRActionSummaryViewMore:
 							m.prView.SetSummaryViewMore()
+							m.syncSidebar()
+							return m, nil
+
+						case prview.PRActionToggleReviewThread:
+							if !m.prView.IsActivityTab() {
+								return m, nil
+							}
+							return m, m.prView.ToggleFocusedReviewThreadResolved()
+
+						case prview.PRActionPrevReviewThread, prview.PRActionNextReviewThread:
+							if !m.prView.IsActivityTab() {
+								return m, nil
+							}
+							moved := false
+							if action.Type == prview.PRActionPrevReviewThread {
+								moved = m.prView.FocusPrevReviewThread()
+							} else {
+								moved = m.prView.FocusNextReviewThread()
+							}
+							if !moved {
+								return m, nil
+							}
 							m.syncSidebar()
 							return m, nil
 						}
@@ -783,6 +831,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if prMsg.IsDraft != nil {
 						pr.Primary.IsDraft = *prMsg.IsDraft
 						pr.Enriched.IsDraft = *prMsg.IsDraft
+					}
+					if prMsg.ThreadReply != nil {
+						for i := range pr.Enriched.ReviewThreads.Nodes {
+							thread := &pr.Enriched.ReviewThreads.Nodes[i]
+							if thread.Id == prMsg.ThreadReply.ThreadId {
+								thread.Comments.Nodes = append(thread.Comments.Nodes, prMsg.ThreadReply.Comment)
+								thread.Comments.TotalCount++
+								break
+							}
+						}
+					}
+					if prMsg.ThreadResolved != nil {
+						for i := range pr.Enriched.ReviewThreads.Nodes {
+							thread := &pr.Enriched.ReviewThreads.Nodes[i]
+							if thread.Id == prMsg.ThreadResolved.ThreadId {
+								thread.IsResolved = prMsg.ThreadResolved.IsResolved
+								break
+							}
+						}
 					}
 				}
 			}
@@ -1258,6 +1325,14 @@ func (m *Model) scrollActivityToSavedOffsetOrBottom() {
 	m.sidebar.ScrollToBottom()
 }
 
+func (m *Model) scrollFocusedActivityToBottom() {
+	offset, ok := m.prView.FocusedActivityScrollOffset(m.sidebar.ViewportHeight())
+	if !ok {
+		return
+	}
+	m.sidebar.ScrollToOffset(offset)
+}
+
 func (m *Model) onWindowSizeChanged(msg tea.WindowSizeMsg) {
 	log.Info("window size changed", "width", msg.Width, "height", msg.Height)
 	m.footer.SetWidth(msg.Width)
@@ -1443,6 +1518,14 @@ func (m *Model) openSidebarForInput(setFunc func(bool) tea.Cmd) tea.Cmd {
 	return cmd
 }
 
+func (m *Model) openSidebarForInputNoScroll(setFunc func(bool) tea.Cmd) tea.Cmd {
+	m.sidebar.IsOpen = true
+	cmd := setFunc(true)
+	m.syncMainContentDimensions()
+	m.syncSidebar()
+	return cmd
+}
+
 func (m *Model) backToNotification() tea.Cmd {
 	if m.notificationView.GetSubjectPR() == nil && m.notificationView.GetSubjectIssue() == nil {
 		return nil
@@ -1483,14 +1566,14 @@ func (m *Model) syncSidebar() tea.Cmd {
 		m.sidebar.ClearHeader()
 		m.sidebar.SetContent(m.branchSidebar.View())
 	case *prrow.Data:
-		m.prView.SetSectionId(m.currSectionId)
+		sectionType := prssection.SectionType
+		if currSection := m.getCurrSection(); currSection != nil {
+			sectionType = currSection.GetType()
+		}
+		m.prView.SetSection(m.currSectionId, sectionType)
 		m.prView.SetRow(row)
 		m.prView.SetWidth(width)
 		m.setPRSidebarContent()
-		// Scroll to bottom if in input mode to keep inputbox visible
-		if m.prView.IsTextInputBoxFocused() {
-			m.sidebar.ScrollToBottom()
-		}
 	case *data.IssueData:
 		m.issueSidebar.SetSectionId(m.currSectionId)
 		m.issueSidebar.SetRow(row)
@@ -1508,14 +1591,10 @@ func (m *Model) syncSidebar() tea.Cmd {
 		if m.notificationView.GetSubjectId() == notifId {
 			// Use cached data
 			if m.notificationView.GetSubjectPR() != nil {
-				m.prView.SetSectionId(0)
+				m.prView.SetSection(m.currSectionId, notificationssection.SectionType)
 				m.prView.SetRow(m.notificationView.GetSubjectPR())
 				m.prView.SetWidth(width)
 				m.setPRSidebarContent()
-				// Scroll to bottom if in input mode to keep inputbox visible
-				if m.prView.IsTextInputBoxFocused() {
-					m.sidebar.ScrollToBottom()
-				}
 			} else if m.notificationView.GetSubjectIssue() != nil {
 				m.issueSidebar.SetSectionId(0)
 				m.issueSidebar.SetRow(m.notificationView.GetSubjectIssue())

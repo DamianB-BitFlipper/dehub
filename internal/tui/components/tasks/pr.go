@@ -24,12 +24,24 @@ type UpdatePRMsg struct {
 	PrNumber         int
 	IsClosed         *bool
 	NewComment       *data.Comment
+	ThreadReply      *ReviewThreadReply
+	ThreadResolved   *ReviewThreadResolved
 	ReadyForReview   *bool
 	IsDraft          *bool
 	IsMerged         *bool
 	AddedAssignees   *data.Assignees
 	RemovedAssignees *data.Assignees
 	Labels           *data.PRLabels
+}
+
+type ReviewThreadReply struct {
+	ThreadId string
+	Comment  data.ReviewComment
+}
+
+type ReviewThreadResolved struct {
+	ThreadId   string
+	IsResolved bool
 }
 
 type DraftablePRData interface {
@@ -184,7 +196,8 @@ func buildTogglePRDraftTask(section SectionIdentifier, pr DraftablePRData) GitHu
 	if !isDraft {
 		args = append(args, "--undo")
 	}
-	args = append(args,
+	args = append(
+		args,
 		fmt.Sprint(prNumber),
 		"-R",
 		pr.GetRepoNameWithOwner(),
@@ -316,8 +329,18 @@ func AssignPR(
 	ctx *context.ProgramContext,
 	section SectionIdentifier,
 	pr data.RowData,
-	usernames []string,
+	added []string,
+	removed []string,
 ) tea.Cmd {
+	return fireTask(ctx, buildAssignPRTask(section, pr, added, removed))
+}
+
+func buildAssignPRTask(
+	section SectionIdentifier,
+	pr data.RowData,
+	added []string,
+	removed []string,
+) GitHubTask {
 	prNumber := pr.GetNumber()
 	args := []string{
 		"pr",
@@ -326,68 +349,40 @@ func AssignPR(
 		"-R",
 		pr.GetRepoNameWithOwner(),
 	}
-	for _, assignee := range usernames {
+	for _, assignee := range added {
 		args = append(args, "--add-assignee", assignee)
 	}
-	return fireTask(ctx, GitHubTask{
+	for _, assignee := range removed {
+		args = append(args, "--remove-assignee", assignee)
+	}
+	return GitHubTask{
 		Id:           buildTaskId("pr_assign", prNumber),
 		Args:         args,
 		Section:      section,
-		StartText:    fmt.Sprintf("Assigning pr #%d to %s", prNumber, usernames),
-		FinishedText: fmt.Sprintf("pr #%d has been assigned to %s", prNumber, usernames),
+		StartText:    fmt.Sprintf("Updating assignees for pr #%d", prNumber),
+		FinishedText: fmt.Sprintf("Assignees for pr #%d have been updated", prNumber),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
-			for _, assignee := range usernames {
-				returnedAssignees.Nodes = append(
-					returnedAssignees.Nodes,
+			addedAssignees := data.Assignees{Nodes: []data.Assignee{}}
+			for _, assignee := range added {
+				addedAssignees.Nodes = append(
+					addedAssignees.Nodes,
 					data.Assignee{Login: assignee},
 				)
 			}
-			return UpdatePRMsg{
-				PrNumber:       prNumber,
-				AddedAssignees: &returnedAssignees,
-			}
-		},
-	})
-}
-
-func UnassignPR(
-	ctx *context.ProgramContext,
-	section SectionIdentifier,
-	pr data.RowData,
-	usernames []string,
-) tea.Cmd {
-	prNumber := pr.GetNumber()
-	args := []string{
-		"pr",
-		"edit",
-		fmt.Sprint(prNumber),
-		"-R",
-		pr.GetRepoNameWithOwner(),
-	}
-	for _, assignee := range usernames {
-		args = append(args, "--remove-assignee", assignee)
-	}
-	return fireTask(ctx, GitHubTask{
-		Id:           buildTaskId("pr_unassign", prNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Unassigning %s from pr #%d", usernames, prNumber),
-		FinishedText: fmt.Sprintf("%s unassigned from pr #%d", usernames, prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
-			for _, assignee := range usernames {
-				returnedAssignees.Nodes = append(
-					returnedAssignees.Nodes,
+			removedAssignees := data.Assignees{Nodes: []data.Assignee{}}
+			for _, assignee := range removed {
+				removedAssignees.Nodes = append(
+					removedAssignees.Nodes,
 					data.Assignee{Login: assignee},
 				)
 			}
 			return UpdatePRMsg{
 				PrNumber:         prNumber,
-				RemovedAssignees: &returnedAssignees,
+				AddedAssignees:   &addedAssignees,
+				RemovedAssignees: &removedAssignees,
 			}
 		},
-	})
+	}
 }
 
 func CommentOnPR(
@@ -418,6 +413,95 @@ func CommentOnPR(
 					Author:    struct{ Login string }{Login: ctx.User},
 					Body:      body,
 					UpdatedAt: time.Now(),
+				},
+			}
+		},
+	})
+}
+
+func ReplyToReviewThread(
+	ctx *context.ProgramContext,
+	section SectionIdentifier,
+	pr data.RowData,
+	threadId string,
+	body string,
+) tea.Cmd {
+	prNumber := pr.GetNumber()
+	return fireTask(ctx, GitHubTask{
+		Id: buildTaskId("pr_thread_reply", prNumber),
+		Args: []string{
+			"api",
+			"graphql",
+			"-f",
+			`query=mutation($thread:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id}}}`,
+			"-F",
+			"thread=" + threadId,
+			"-f",
+			"body=" + body,
+		},
+		Section:      section,
+		StartText:    fmt.Sprintf("Replying to review thread on PR #%d", prNumber),
+		FinishedText: fmt.Sprintf("Replied to review thread on PR #%d", prNumber),
+		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdatePRMsg{PrNumber: prNumber}
+			}
+
+			return UpdatePRMsg{
+				PrNumber: prNumber,
+				ThreadReply: &ReviewThreadReply{
+					ThreadId: threadId,
+					Comment: data.ReviewComment{
+						Author:    struct{ Login string }{Login: ctx.User},
+						Body:      body,
+						UpdatedAt: time.Now(),
+					},
+				},
+			}
+		},
+	})
+}
+
+func ToggleReviewThreadResolved(
+	ctx *context.ProgramContext,
+	section SectionIdentifier,
+	pr data.RowData,
+	threadId string,
+	isResolved bool,
+) tea.Cmd {
+	prNumber := pr.GetNumber()
+	mutation := `query=mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id isResolved}}}`
+	startText := fmt.Sprintf("Resolving review thread on PR #%d", prNumber)
+	finishedText := fmt.Sprintf("Resolved review thread on PR #%d", prNumber)
+	if isResolved {
+		mutation = `query=mutation($thread:ID!){unresolveReviewThread(input:{threadId:$thread}){thread{id isResolved}}}`
+		startText = fmt.Sprintf("Unresolving review thread on PR #%d", prNumber)
+		finishedText = fmt.Sprintf("Unresolved review thread on PR #%d", prNumber)
+	}
+
+	return fireTask(ctx, GitHubTask{
+		Id: buildTaskId("pr_thread_resolve", prNumber),
+		Args: []string{
+			"api",
+			"graphql",
+			"-f",
+			mutation,
+			"-F",
+			"thread=" + threadId,
+		},
+		Section:      section,
+		StartText:    startText,
+		FinishedText: finishedText,
+		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdatePRMsg{PrNumber: prNumber}
+			}
+
+			return UpdatePRMsg{
+				PrNumber: prNumber,
+				ThreadResolved: &ReviewThreadResolved{
+					ThreadId:   threadId,
+					IsResolved: !isResolved,
 				},
 			}
 		},

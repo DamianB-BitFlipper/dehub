@@ -8,34 +8,19 @@ summary: >-
 
 import { Aside } from "@astrojs/starlight/components";
 
-## `a` - Assign PR
+## `a` - Edit PR Assignees
 
-Press <kbd>a</kbd> to assign one or more users to the PR. When you do, the dashboard opens the
+Press <kbd>a</kbd> to edit the users assigned to the PR. When you do, the dashboard opens the
 preview pane and displays a new input.
 
-When the unassign input is active, you can specify one or more GitHub usernames to assign to the
-PR. By default, the input includes your username if you're not already assigned. If you're already
-assigned, the input is empty by default.
+When the assignees input is active, it includes the current assignees separated by newlines. Add
+usernames to assign more users, or remove usernames to unassign users from the PR.
 
-To assign more than one user to the PR, specify additional users after one or more whitespace
+To assign more than one user to the PR, specify users after one or more whitespace
 characters, like a space, tab, or newline. We recommend separating the additional users with a
 newline by pressing <kbd>Enter</kbd> after each username.
 
-To submit the list of users to assign to the PR, press <kbd>Ctrl</kbd>+<kbd>d</kbd>. To cancel the
-change instead, press <kbd>Ctrl</kbd>+<kbd>c</kbd> or <kbd>Esc</kbd>.
-
-## `A` - Unassign PR
-
-Press <kbd>A</kbd> to unassign one or more users from the PR. When you do, the dashboard opens the
-preview pane and displays a new input.
-
-When the unassign input is active, you can specify one or more GitHub usernames to unassign from
-the PR. By default, the input includes all assigned users separated by newlines.
-
-Make sure the list of users to unassign only includes the users you want to unassign before you
-submit the list.
-
-To submit the list of users to unassign from the PR, press <kbd>Ctrl</kbd>+<kbd>d</kbd>. To cancel the
+To submit the edited assignee list, press <kbd>Ctrl</kbd>+<kbd>d</kbd>. To cancel the
 change instead, press <kbd>Ctrl</kbd>+<kbd>c</kbd> or <kbd>Esc</kbd>.
 
 ## `c` - Comment on PR

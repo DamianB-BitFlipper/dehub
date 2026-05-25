@@ -228,15 +228,37 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			}
 			if msg.NewComment != nil {
 				currPr.Enriched.Comments.Nodes = append(
-					currPr.Enriched.Comments.Nodes, *msg.NewComment)
+					currPr.Enriched.Comments.Nodes, *msg.NewComment,
+				)
+			}
+			if msg.ThreadReply != nil {
+				for j := range currPr.Enriched.ReviewThreads.Nodes {
+					thread := &currPr.Enriched.ReviewThreads.Nodes[j]
+					if thread.Id == msg.ThreadReply.ThreadId {
+						thread.Comments.Nodes = append(thread.Comments.Nodes, msg.ThreadReply.Comment)
+						thread.Comments.TotalCount++
+						break
+					}
+				}
+			}
+			if msg.ThreadResolved != nil {
+				for j := range currPr.Enriched.ReviewThreads.Nodes {
+					thread := &currPr.Enriched.ReviewThreads.Nodes[j]
+					if thread.Id == msg.ThreadResolved.ThreadId {
+						thread.IsResolved = msg.ThreadResolved.IsResolved
+						break
+					}
+				}
 			}
 			if msg.AddedAssignees != nil {
 				currPr.Primary.Assignees.Nodes = addAssignees(
-					currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes)
+					currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes,
+				)
 			}
 			if msg.RemovedAssignees != nil {
 				currPr.Primary.Assignees.Nodes = removeAssignees(
-					currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes)
+					currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes,
+				)
 			}
 			if msg.Labels != nil {
 				currPr.Primary.Labels.Nodes = msg.Labels.Nodes
@@ -775,7 +797,8 @@ func FetchAllSections(
 		sections = append(sections, &sectionModel)
 		fetchPRsCmds = append(
 			fetchPRsCmds,
-			sectionModel.FetchNextPageSectionRows()...)
+			sectionModel.FetchNextPageSectionRows()...,
+		)
 	}
 	return sections, tea.Batch(fetchPRsCmds...)
 }

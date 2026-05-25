@@ -14,7 +14,6 @@ type PRKeyMap struct {
 	NextSidebarTab       key.Binding
 	Approve              key.Binding
 	Assign               key.Binding
-	Unassign             key.Binding
 	Label                key.Binding
 	Comment              key.Binding
 	Diff                 key.Binding
@@ -28,6 +27,9 @@ type PRKeyMap struct {
 	Merge                key.Binding
 	Update               key.Binding
 	ApproveWorkflows     key.Binding
+	PrevReviewThread     key.Binding
+	NextReviewThread     key.Binding
+	ToggleReviewThread   key.Binding
 	ToggleSmartFiltering key.Binding
 	SortOrder            key.Binding
 	ViewIssues           key.Binding
@@ -48,11 +50,7 @@ var PRKeys = PRKeyMap{
 	),
 	Assign: key.NewBinding(
 		key.WithKeys("a"),
-		key.WithHelp("a", "assign"),
-	),
-	Unassign: key.NewBinding(
-		key.WithKeys("A"),
-		key.WithHelp("A", "unassign"),
+		key.WithHelp("a", "edit assignees"),
 	),
 	Label: key.NewBinding(
 		key.WithKeys("L"),
@@ -106,6 +104,18 @@ var PRKeys = PRKeyMap{
 		key.WithKeys("V"),
 		key.WithHelp("V", "approve all workflows"),
 	),
+	PrevReviewThread: key.NewBinding(
+		key.WithKeys("["),
+		key.WithHelp("[", "previous review thread"),
+	),
+	NextReviewThread: key.NewBinding(
+		key.WithKeys("]"),
+		key.WithHelp("]", "next review thread"),
+	),
+	ToggleReviewThread: key.NewBinding(
+		key.WithKeys("z"),
+		key.WithHelp("z", "resolve/unresolve thread"),
+	),
 	ToggleSmartFiltering: key.NewBinding(
 		key.WithKeys("t"),
 		key.WithHelp("t", "toggle smart filtering"),
@@ -126,7 +136,6 @@ func PRFullHelp() []key.Binding {
 		PRKeys.NextSidebarTab,
 		PRKeys.Approve,
 		PRKeys.Assign,
-		PRKeys.Unassign,
 		PRKeys.Label,
 		PRKeys.Comment,
 		PRKeys.Diff,
@@ -138,6 +147,9 @@ func PRFullHelp() []key.Binding {
 		PRKeys.Merge,
 		PRKeys.Update,
 		PRKeys.ApproveWorkflows,
+		PRKeys.PrevReviewThread,
+		PRKeys.NextReviewThread,
+		PRKeys.ToggleReviewThread,
 		PRKeys.ToggleSmartFiltering,
 		PRKeys.SortOrder,
 		PRKeys.ViewIssues,
@@ -179,8 +191,6 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.Approve
 		case "assign":
 			key = &PRKeys.Assign
-		case "unassign":
-			key = &PRKeys.Unassign
 		case "label":
 			key = &PRKeys.Label
 		case "comment":
@@ -205,6 +215,12 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.Update
 		case "approveWorkflows":
 			key = &PRKeys.ApproveWorkflows
+		case "prevReviewThread":
+			key = &PRKeys.PrevReviewThread
+		case "nextReviewThread":
+			key = &PRKeys.NextReviewThread
+		case "toggleReviewThread":
+			key = &PRKeys.ToggleReviewThread
 		case "sortOrder":
 			key = &PRKeys.SortOrder
 		case "viewIssues":
