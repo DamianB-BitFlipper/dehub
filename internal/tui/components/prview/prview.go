@@ -44,6 +44,7 @@ type Model struct {
 	focusedThread        int
 	focusedBottom        int
 	activityFocusTargets []int
+	reviewDiffCache      map[string][]reviewDiffLine
 }
 
 type WatchReason int
@@ -71,10 +72,11 @@ func NewModel(ctx *context.ProgramContext) Model {
 	cmp := cmpcontroller.New(ctx, inputbox.ModelOpts{TextArea: &ta})
 
 	return Model{
-		pr:            nil,
-		carousel:      c,
-		editor:        cmp,
-		focusedThread: focusedNewComment,
+		pr:              nil,
+		carousel:        c,
+		editor:          cmp,
+		focusedThread:   focusedNewComment,
+		reviewDiffCache: map[string][]reviewDiffLine{},
 	}
 }
 
@@ -1030,6 +1032,7 @@ func (m *Model) SetEnrichedPR(data data.EnrichedPullRequestData) {
 	if m.pr.Data.Primary.Url == data.Url {
 		m.pr.Data.Enriched = data
 		m.pr.Data.IsEnriched = true
+		m.reviewDiffCache = map[string][]reviewDiffLine{}
 		m.clampFocusedReviewThread()
 	}
 }

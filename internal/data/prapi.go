@@ -249,6 +249,7 @@ type ReviewComment struct {
 		Login string
 	}
 	Body      string
+	DiffHunk  string
 	UpdatedAt time.Time
 	StartLine int
 	Line      int

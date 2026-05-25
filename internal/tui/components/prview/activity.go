@@ -47,6 +47,9 @@ func (m *Model) renderActivity() string {
 			IsResolved: review.IsResolved,
 		}
 		for _, c := range review.Comments.Nodes {
+			if thread.DiffHunk == "" {
+				thread.DiffHunk = c.DiffHunk
+			}
 			thread.Comments = append(thread.Comments, comment{
 				Author:    c.Author.Login,
 				Body:      c.Body,
@@ -162,6 +165,7 @@ type reviewThread struct {
 	Line       int
 	IsOutdated bool
 	IsResolved bool
+	DiffHunk   string
 	Comments   []comment
 }
 
@@ -256,7 +260,15 @@ func (m *Model) renderReviewThread(
 	)
 
 	var renderedComments []string
+	if preview := m.renderReviewDiffPreview(thread.Id, thread.Path, thread.DiffHunk, max(1, width-4)); preview != "" {
+		renderedComments = append(renderedComments, preview)
+	}
 	for i, comment := range thread.Comments {
+		if i == 0 && len(renderedComments) > 0 {
+			renderedComments = append(renderedComments, lipgloss.NewStyle().
+				Foreground(m.ctx.Theme.FaintBorder).
+				Render("─"))
+		}
 		renderedComment, err := m.renderThreadComment(comment, markdownRenderer)
 		if err != nil {
 			return "", err
