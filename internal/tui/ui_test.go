@@ -325,8 +325,8 @@ func TestMaybeSchedulePRWatch_OverviewWithoutPendingChecks(t *testing.T) {
 
 	cmd := m.maybeSchedulePRWatch()
 
-	require.Nil(t, cmd)
-	require.Empty(t, m.prWatchURL)
+	require.NotNil(t, cmd)
+	require.Equal(t, "https://github.com/owner/repo/pull/1", m.prWatchURL)
 }
 
 func TestVisibleRefreshTargetsIncludesCurrentPRSection(t *testing.T) {

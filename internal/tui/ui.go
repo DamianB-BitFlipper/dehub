@@ -2295,14 +2295,7 @@ func (m *Model) shouldWatchCurrentPR() bool {
 		return false
 	}
 
-	switch m.prView.WatchReason() {
-	case prview.WatchChecks:
-		return m.prView.HasPendingChecks()
-	case prview.WatchActivity:
-		return true
-	default:
-		return false
-	}
+	return m.prView.CurrentPRURL() != ""
 }
 
 func (m *Model) maybeSchedulePRWatch() tea.Cmd {
