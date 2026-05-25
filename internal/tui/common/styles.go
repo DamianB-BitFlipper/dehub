@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	HeaderHeight       = 2
+	HeaderHeight       = 3
 	SearchHeight       = 3
 	FooterHeight       = 1
 	ExpandedHelpHeight = 17
@@ -17,7 +17,7 @@ var (
 	SingleRuneWidth    = 4
 	MainContentPadding = 1
 	TabsBorderHeight   = 1
-	TabsContentHeight  = 2
+	TabsContentHeight  = 3
 	TabsHeight         = TabsBorderHeight + TabsContentHeight
 	ViewSwitcherMargin = 1
 	TableHeaderHeight  = 2
@@ -102,10 +102,12 @@ func RenderPreviewHeader(theme theme.Theme, width int, text string) string {
 // RenderPreviewTitle renders the title block with background highlight
 func RenderPreviewTitle(theme theme.Theme, styles CommonStyles, width int, title string) string {
 	return lipgloss.NewStyle().Height(3).Width(width).Background(
-		theme.SelectedBackground).PaddingLeft(1).Render(
-		lipgloss.PlaceVertical(3, lipgloss.Center, styles.MainTextStyle.
-			Background(theme.SelectedBackground).
-			Render(title),
+		theme.SelectedBackground,
+	).PaddingLeft(1).Render(
+		lipgloss.PlaceVertical(
+			3, lipgloss.Center, styles.MainTextStyle.
+				Background(theme.SelectedBackground).
+				Render(title),
 		),
 	)
 }

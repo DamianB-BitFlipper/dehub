@@ -292,6 +292,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, prViewCmd, m.maybeSchedulePRWatch())
 			return m, tea.Batch(cmds...)
 
+		case m.isPageDownKey(msg):
+			if m.isPreviewFocused() {
+				m.sidebar, sidebarCmd = m.sidebar.Update(msg)
+				return m, sidebarCmd
+			}
+			if currSection != nil {
+				prevRow := currSection.CurrRow()
+				nextRow := prevRow
+				for range m.mainPageSize() {
+					nextRow = currSection.NextRow()
+					if nextRow == currSection.NumRows()-1 {
+						break
+					}
+				}
+				if prevRow != nextRow && nextRow == currSection.NumRows()-1 &&
+					m.ctx.View != config.RepoView {
+					cmds = append(cmds, currSection.FetchNextPageSectionRows()...)
+				}
+				cmd = m.onViewedRowChanged()
+			}
+
+		case m.isPageUpKey(msg):
+			if m.isPreviewFocused() {
+				m.sidebar, sidebarCmd = m.sidebar.Update(msg)
+				return m, sidebarCmd
+			}
+			if currSection != nil {
+				for range m.mainPageSize() {
+					prevRow := currSection.CurrRow()
+					currSection.PrevRow()
+					if currSection.CurrRow() == prevRow {
+						break
+					}
+				}
+				cmd = m.onViewedRowChanged()
+			}
+
 		case m.isPreviewFocused() && m.isPreviewNavigationKey(msg):
 			m.sidebar, sidebarCmd = m.sidebar.Update(msg)
 			return m, sidebarCmd
@@ -1327,7 +1364,23 @@ func (m *Model) setActivePane(pane activePane) {
 
 func (m *Model) isPreviewNavigationKey(msg tea.KeyMsg) bool {
 	return key.Matches(msg, m.keys.Up) || key.Matches(msg, m.keys.Down) ||
+		m.isPageUpKey(msg) || m.isPageDownKey(msg) ||
 		key.Matches(msg, m.keys.FirstLine) || key.Matches(msg, m.keys.LastLine)
+}
+
+func (m *Model) isPageDownKey(msg tea.KeyMsg) bool {
+	return key.Matches(msg, m.keys.PageDown) || msg.String() == "ctrl+down"
+}
+
+func (m *Model) isPageUpKey(msg tea.KeyMsg) bool {
+	return key.Matches(msg, m.keys.PageUp) || msg.String() == "ctrl+up"
+}
+
+func (m *Model) mainPageSize() int {
+	if m.ctx == nil {
+		return 1
+	}
+	return max(1, m.ctx.MainContentHeight/2)
 }
 
 func (m *Model) isPreviewTabKey(msg tea.KeyMsg) bool {

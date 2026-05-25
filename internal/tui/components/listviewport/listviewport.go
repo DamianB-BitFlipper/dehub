@@ -112,6 +112,28 @@ func (m *Model) PrevItem() int {
 	return m.currId
 }
 
+func (m *Model) PageDown() int {
+	count := max(1, m.getNumPrsPerPage())
+	for range count {
+		if m.currId >= m.NumCurrentItems-1 {
+			break
+		}
+		m.NextItem()
+	}
+	return m.currId
+}
+
+func (m *Model) PageUp() int {
+	count := max(1, m.getNumPrsPerPage())
+	for range count {
+		if m.currId <= 0 {
+			break
+		}
+		m.PrevItem()
+	}
+	return m.currId
+}
+
 func (m *Model) FirstItem() int {
 	m.currId = 0
 	m.viewport.GotoTop()

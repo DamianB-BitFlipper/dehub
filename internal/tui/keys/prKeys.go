@@ -109,12 +109,12 @@ var PRKeys = PRKeyMap{
 		key.WithHelp("V", "approve all workflows"),
 	),
 	PrevReviewThread: key.NewBinding(
-		key.WithKeys("ctrl+up"),
-		key.WithHelp("Ctrl+↑", "previous review thread"),
+		key.WithKeys(","),
+		key.WithHelp(",", "previous review thread"),
 	),
 	NextReviewThread: key.NewBinding(
-		key.WithKeys("ctrl+down"),
-		key.WithHelp("Ctrl+↓", "next review thread"),
+		key.WithKeys("."),
+		key.WithHelp(".", "next review thread"),
 	),
 	ToggleReviewThread: key.NewBinding(
 		key.WithKeys("z"),

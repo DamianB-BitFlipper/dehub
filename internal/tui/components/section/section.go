@@ -180,6 +180,8 @@ type Table interface {
 	CurrRow() int
 	NextRow() int
 	PrevRow() int
+	PageDown() int
+	PageUp() int
 	FirstItem() int
 	LastItem() int
 	FetchNextPageSectionRows() []tea.Cmd
@@ -342,6 +344,14 @@ func (m *BaseModel) NextRow() int {
 
 func (m *BaseModel) PrevRow() int {
 	return m.Table.PrevItem()
+}
+
+func (m *BaseModel) PageDown() int {
+	return m.Table.PageDown()
+}
+
+func (m *BaseModel) PageUp() int {
+	return m.Table.PageUp()
 }
 
 func (m *BaseModel) FirstItem() int {

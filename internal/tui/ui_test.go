@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/branchsidebar"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/footer"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issueview"
@@ -569,9 +571,10 @@ func TestPRPreviewTabMemory(t *testing.T) {
 	ctx.Styles = context.InitStyles(ctx.Theme)
 
 	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
-	prSection.Prs = []prrow.Data{
-		{Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1")},
-		{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
+	for i := 1; i <= 20; i++ {
+		prSection.Prs = append(prSection.Prs, prrow.Data{
+			Primary: testPullRequestData(i, fmt.Sprintf("https://github.com/owner/repo/pull/%d", i)),
+		})
 	}
 	prSection.Table.SetRows(prSection.BuildRows())
 	sidebarModel := sidebar.NewModel()
@@ -1374,7 +1377,7 @@ func TestPRInputFocusedPageKeysScrollSidebar(t *testing.T) {
 	require.Less(t, m.sidebar.YOffset(), initialOffset)
 
 	initialOffset = m.sidebar.YOffset()
-	newModel, _ = m.Update(tea.KeyPressMsg{Text: "ctrl+down"})
+	newModel, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	m = newModel.(Model)
 	require.Greater(t, m.sidebar.YOffset(), initialOffset)
 
@@ -1388,6 +1391,11 @@ func TestPRInputFocusedPageKeysScrollSidebar(t *testing.T) {
 }
 
 func TestPreviewFocusRoutesNavigationToSidebar(t *testing.T) {
+	keys.Keys.PageDown.SetKeys("ctrl+down")
+	keys.Keys.PageUp.SetKeys("ctrl+up")
+	keys.Keys.FocusMain.SetKeys("ctrl+left")
+	keys.Keys.FocusPreview.SetKeys("ctrl+right")
+
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag:       "../config/testdata/test-config.yml",
 		SkipGlobalConfig: true,
@@ -1407,9 +1415,10 @@ func TestPreviewFocusRoutesNavigationToSidebar(t *testing.T) {
 	markdown.InitializeMarkdownStyle(true)
 
 	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
-	prSection.Prs = []prrow.Data{
-		{Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1")},
-		{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
+	for i := 1; i <= 20; i++ {
+		prSection.Prs = append(prSection.Prs, prrow.Data{
+			Primary: testPullRequestData(i, fmt.Sprintf("https://github.com/owner/repo/pull/%d", i)),
+		})
 	}
 	prSection.Table.SetRows(prSection.BuildRows())
 
@@ -1453,13 +1462,27 @@ func TestPreviewFocusRoutesNavigationToSidebar(t *testing.T) {
 	m = newModel.(Model)
 	require.Equal(t, 0, m.sidebar.YOffset())
 
+	newModel, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	m = newModel.(Model)
+	require.Equal(t, initialRow, prSection.CurrRow())
+	require.Greater(t, m.sidebar.YOffset(), 1)
+
 	newModel, _ = m.Update(tea.KeyPressMsg{Text: "ctrl+left"})
 	m = newModel.(Model)
 	require.Equal(t, mainPane, m.activePane)
 
 	newModel, _ = m.Update(tea.KeyPressMsg{Text: "down"})
 	m = newModel.(Model)
+	require.Equal(t, mainPane, m.activePane)
+	require.False(t, m.prView.IsTextInputBoxFocused())
 	require.Equal(t, initialRow+1, prSection.CurrRow())
+
+	pageDownMsg := tea.KeyPressMsg{Text: "ctrl+down"}
+	require.True(t, m.isPageDownKey(pageDownMsg))
+	require.Greater(t, m.getCurrSection().NumRows(), 2)
+	newModel, _ = m.Update(pageDownMsg)
+	m = newModel.(Model)
+	require.Greater(t, m.getCurrSection().CurrRow(), initialRow+2)
 }
 
 func TestOpenPRCommentInputNoScrollPreservesSidebarOffset(t *testing.T) {
@@ -1556,7 +1579,7 @@ func TestSyncMainContentDimensions_BottomMode(t *testing.T) {
 			screenHeight:          40,
 			previewHeight:         0.4,
 			sidebarOpen:           true,
-			expectedPreviewHeight: 14,
+			expectedPreviewHeight: 13,
 			expectedMainHeight:    21,
 			expectedMainWidth:     100,
 		},
@@ -1567,7 +1590,7 @@ func TestSyncMainContentDimensions_BottomMode(t *testing.T) {
 			previewHeight:         0.4,
 			sidebarOpen:           false,
 			expectedPreviewHeight: 0,
-			expectedMainHeight:    36,
+			expectedMainHeight:    35,
 			expectedMainWidth:     100,
 		},
 		{
@@ -1577,7 +1600,7 @@ func TestSyncMainContentDimensions_BottomMode(t *testing.T) {
 			previewHeight:         10,
 			sidebarOpen:           true,
 			expectedPreviewHeight: 10,
-			expectedMainHeight:    25,
+			expectedMainHeight:    24,
 			expectedMainWidth:     100,
 		},
 	}
@@ -1618,7 +1641,7 @@ func TestSyncMainContentDimensions_BottomMode(t *testing.T) {
 					"DynamicPreviewHeight mismatch")
 				// Verify total doesn't exceed available space:
 				// main content + preview + border must equal base content height
-				baseHeight := tc.screenHeight - 4 // TabsHeight=3 + FooterHeight=1
+				baseHeight := tc.screenHeight - common.TabsHeight - common.FooterHeight
 				borderHeight := styles.Sidebar.BorderWidth
 				require.Equal(
 					t,

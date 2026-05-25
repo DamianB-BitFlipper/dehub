@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/carousel"
@@ -70,7 +71,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	c := m.carousel.View()
+	c := lipgloss.JoinVertical(lipgloss.Left, m.viewTabs(), m.viewSectionTabs())
 	logo := m.viewLogo()
 	content := m.ctx.Styles.Tabs.TabsRow.
 		Width(m.ctx.ScreenWidth).
@@ -82,6 +83,86 @@ func (m Model) View() string {
 			).Render(c), logo))
 
 	return lipgloss.JoinVertical(lipgloss.Left, content, m.focusDivider())
+}
+
+func (m Model) viewTabs() string {
+	views := []config.ViewType{config.PRsView, config.IssuesView, config.NotificationsView}
+	labels := map[config.ViewType]string{
+		config.PRsView:           "Pull Requests",
+		config.IssuesView:        "Issues",
+		config.NotificationsView: "Notifications",
+	}
+	parts := make([]string, 0, len(views)*2-1)
+	inactiveStyle := lipgloss.NewStyle().
+		Padding(0, 1).
+		Background(lipgloss.Color("#171A2B")).
+		Foreground(lipgloss.Color("#7F86B8"))
+	activeStyle := inactiveStyle.
+		Background(lipgloss.Color("#3B315F")).
+		Foreground(lipgloss.Color("#F4F1FF")).
+		Bold(true)
+	separatorStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#171A2B")).
+		Foreground(lipgloss.Color("#7F86B8"))
+	for i, view := range views {
+		style := inactiveStyle
+		if m.ctx.View == view {
+			style = activeStyle
+		}
+		parts = append(parts, style.Render(labels[view]))
+		if i < len(views)-1 {
+			parts = append(parts, separatorStyle.Render("|"))
+		}
+	}
+	return lipgloss.PlaceHorizontal(
+		m.ctx.ScreenWidth,
+		lipgloss.Center,
+		lipgloss.JoinHorizontal(lipgloss.Top, parts...),
+	)
+}
+
+func (m Model) viewSectionTabs() string {
+	if len(m.sectionTabs) == 0 {
+		return ""
+	}
+
+	left := m.renderSectionTabItems(1, len(m.sectionTabs))
+	search := m.renderSectionTabItems(0, 1)
+	spacing := strings.Repeat(" ", max(0, m.ctx.ScreenWidth-lipgloss.Width(left)-lipgloss.Width(search)))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, spacing, search)
+}
+
+func (m Model) renderSectionTabItems(start, end int) string {
+	parts := make([]string, 0, max(0, end-start)*2)
+	for i := start; i < end; i++ {
+		if i > start {
+			parts = append(parts, m.ctx.Styles.Tabs.TabSeparator.Render("|"))
+		}
+		style := m.ctx.Styles.Tabs.Tab
+		if m.carousel.Cursor() == i {
+			style = m.ctx.Styles.Tabs.ActiveTab
+		}
+		parts = append(parts, style.Render(m.sectionTabTitle(i)))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
+
+func (m Model) sectionTabTitle(i int) string {
+	if i < 0 || i >= len(m.sectionTabs) {
+		return ""
+	}
+	cfg := m.sectionTabs[i].section.GetConfig()
+	title := cfg.Title
+	if i == 0 {
+		if title == "" {
+			title = constants.SearchIcon
+		}
+	} else if m.sectionTabs[i].section.GetIsLoading() {
+		title = fmt.Sprintf("%s %s", title, m.sectionTabs[i].spinner.View())
+	} else if m.ctx.Config.Theme.Ui.SectionsShowCount {
+		title = fmt.Sprintf("%s (%s)", title, utils.ShortNumber(m.sectionTabs[i].section.GetTotalCount()))
+	}
+	return title
 }
 
 func (m Model) focusDivider() string {

@@ -114,6 +114,14 @@ func (t *TestSection) LastItem() int {
 	panic("unimplemented")
 }
 
+func (t *TestSection) PageDown() int {
+	panic("unimplemented")
+}
+
+func (t *TestSection) PageUp() int {
+	panic("unimplemented")
+}
+
 // MakeSectionCmd implements section.Section.
 func (t *TestSection) MakeSectionCmd(cmd tea.Cmd) tea.Cmd {
 	panic("unimplemented")

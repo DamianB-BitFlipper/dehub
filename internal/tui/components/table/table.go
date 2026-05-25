@@ -152,6 +152,20 @@ func (m *Model) LastItem() int {
 	return currItem
 }
 
+func (m *Model) PageDown() int {
+	currItem := m.rowsViewport.PageDown()
+	m.SyncViewPortContent()
+
+	return currItem
+}
+
+func (m *Model) PageUp() int {
+	currItem := m.rowsViewport.PageUp()
+	m.SyncViewPortContent()
+
+	return currItem
+}
+
 func (m *Model) cacheColumnWidths() {
 	columns := m.renderHeaderColumns()
 	for i, col := range columns {

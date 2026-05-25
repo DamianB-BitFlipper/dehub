@@ -60,8 +60,8 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 		{"update key", tea.KeyPressMsg{Code: 'u'}, PRActionUpdate},
 		{"summary view more key", tea.KeyPressMsg{Code: 'e'}, PRActionSummaryViewMore},
 		{"approve workflows key", tea.KeyPressMsg{Code: 'V'}, PRActionApproveWorkflows},
-		{"previous review thread key", tea.KeyPressMsg{Text: "ctrl+up"}, PRActionPrevReviewThread},
-		{"next review thread key", tea.KeyPressMsg{Text: "ctrl+down"}, PRActionNextReviewThread},
+		{"previous review thread key", tea.KeyPressMsg{Code: ','}, PRActionPrevReviewThread},
+		{"next review thread key", tea.KeyPressMsg{Code: '.'}, PRActionNextReviewThread},
 		{"toggle review thread key", tea.KeyPressMsg{Code: 'z'}, PRActionToggleReviewThread},
 	}
 
