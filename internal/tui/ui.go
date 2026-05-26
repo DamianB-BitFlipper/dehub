@@ -269,13 +269,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		if m.prView.IsChecksLogsSearchFocused() {
+		// prView and issueSidebar state must only influence key routing
+		// when their respective surfaces are the active view. Otherwise
+		// stale focus state (e.g. the user left the PR Checks logs
+		// search focused, then switched to the dashboard Actions view)
+		// silently hijacks keys meant for the current view. See
+		// prViewIsActive / issueSidebarIsActive for the predicate.
+		if m.prViewIsActive() && m.prView.IsChecksLogsSearchFocused() {
 			m.prView, cmd = m.prView.Update(msg)
 			m.syncSidebar()
 			return m, cmd
 		}
 
-		if m.prView.IsTextInputBoxFocused() {
+		if m.prViewIsActive() && m.prView.IsTextInputBoxFocused() {
 			if key.Matches(msg, keys.Keys.PageUp) || key.Matches(msg, keys.Keys.PageDown) ||
 				key.Matches(msg, keys.Keys.PreviewTop) || key.Matches(msg, keys.Keys.PreviewBottom) {
 				m.sidebar, sidebarCmd = m.sidebar.Update(msg)
@@ -286,7 +292,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		if m.issueSidebar.IsTextInputBoxFocused() {
+		if m.issueSidebarIsActive() && m.issueSidebar.IsTextInputBoxFocused() {
 			if key.Matches(msg, keys.Keys.PageUp) || key.Matches(msg, keys.Keys.PageDown) ||
 				key.Matches(msg, keys.Keys.PreviewTop) || key.Matches(msg, keys.Keys.PreviewBottom) {
 				m.sidebar, sidebarCmd = m.sidebar.Update(msg)
@@ -482,7 +488,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
-		case key.Matches(msg, m.keys.LocalSearch) && m.prView.IsChecksTab():
+		case key.Matches(msg, m.keys.LocalSearch) && m.prViewIsActive() && m.prView.IsChecksTab():
+			// Only route `s` to the PR Checks logs search when the
+			// prView is the active surface. Without the prViewIsActive
+			// gate, leaving the PR Checks tab "selected" on prView
+			// caused `s` to be unconditionally consumed by the hidden
+			// prView while in other views (e.g. dashboard Actions),
+			// preventing those views' own local-search handler from
+			// firing.
 			cmd = m.prView.FocusChecksLogsSearch()
 			m.syncSidebar()
 			return m, cmd
@@ -1397,7 +1410,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	m.sidebar, sidebarCmd = m.sidebar.Update(msg)
 
-	if m.prView.IsTextInputBoxFocused() {
+	// Match the same active-surface gating used in the early-return
+	// branches above: prView/issueSidebar text-input forwarding must
+	// only fire when their surfaces are the active view. For key
+	// messages this is already handled by the early-return blocks in
+	// the tea.KeyMsg arm; the guards here additionally cover any other
+	// message type that this fall-through block runs for (window size,
+	// etc.) and keep the dispatch consistent.
+	if m.prViewIsActive() && m.prView.IsTextInputBoxFocused() {
 		m.prView, prViewCmd = m.prView.Update(msg)
 		m.syncSidebar()
 	}
@@ -1407,7 +1427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncSidebar()
 	}
 
-	if m.issueSidebar.IsTextInputBoxFocused() {
+	if m.issueSidebarIsActive() && m.issueSidebar.IsTextInputBoxFocused() {
 		m.issueSidebar, issueSidebarCmd, _ = m.issueSidebar.Update(msg)
 		m.syncSidebar()
 	}
@@ -1751,6 +1771,45 @@ func completionLayerY(previewTop int, previewView string, inputLineFromBottom in
 
 func (m *Model) isPreviewFocused() bool {
 	return m.activePane == previewPane && m.sidebar.IsOpen
+}
+
+// prViewIsActive reports whether the prView is the active surface for the
+// current view. prView state (current sidebar tab, embedded actionview
+// focus, inline editor active flag, etc.) must only influence key routing
+// when this returns true; otherwise stale prView state from a previously-
+// visited PR can hijack keystrokes meant for the current view, e.g. when
+// the dashboard Actions view is foreground but the prView's last tab was
+// Checks. The notifications view is included because a PR notification
+// reuses prView as its detail surface.
+func (m *Model) prViewIsActive() bool {
+	if m.ctx == nil {
+		return false
+	}
+	switch m.ctx.View {
+	case config.PRsView:
+		return true
+	case config.NotificationsView:
+		return m.notificationView.GetSubjectPR() != nil
+	default:
+		return false
+	}
+}
+
+// issueSidebarIsActive is the symmetrical predicate for the issue sidebar.
+// Only IssuesView (or NotificationsView with an Issue subject) should let
+// the issue sidebar's input-focus state influence key routing.
+func (m *Model) issueSidebarIsActive() bool {
+	if m.ctx == nil {
+		return false
+	}
+	switch m.ctx.View {
+	case config.IssuesView:
+		return true
+	case config.NotificationsView:
+		return m.notificationView.GetSubjectIssue() != nil
+	default:
+		return false
+	}
 }
 
 func (m *Model) setActivePane(pane activePane) {
