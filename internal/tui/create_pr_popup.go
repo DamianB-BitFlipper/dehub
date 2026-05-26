@@ -14,7 +14,7 @@ func (m *Model) activeCreatePRSection() (*prssection.Model, bool) {
 	if !ok || prSection == nil {
 		return nil, false
 	}
-	if !prSection.IsPromptConfirmationFocused() || prSection.GetPromptConfirmationAction() != "create_pr" {
+	if !prSection.IsPromptConfirmationFocused() || (prSection.GetPromptConfirmationAction() != "create_pr" && prSection.GetPromptConfirmationAction() != "edit_pr") {
 		return nil, false
 	}
 	return prSection, true
@@ -30,10 +30,14 @@ func (m *Model) renderCreatePRPopup() string {
 	contentWidth := width - 4
 	prSection.CreatePRForm.SetWidth(contentWidth)
 
+	titleText := "Create PR"
+	if prSection.GetPromptConfirmationAction() == "edit_pr" {
+		titleText = "Edit PR"
+	}
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(m.ctx.Theme.PrimaryText).
-		Render("Create PR")
+		Render(titleText)
 
 	repo := ""
 	if repoName, ok := prSection.RepoFromFilters(); ok {

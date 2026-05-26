@@ -1,13 +1,14 @@
 package context
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
-	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
 
 type State = int
@@ -54,14 +55,6 @@ type ProgramContext struct {
 func (ctx *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
 	var configs []config.SectionConfig
 	switch ctx.View {
-	case config.RepoView:
-		t := config.RepoView
-		configs = append(configs, config.PrsSectionConfig{
-			Title:   "Local Branches",
-			Filters: "author:@me is:open",
-			Limit:   utils.IntPtr(20),
-			Type:    &t,
-		}.ToSectionConfig())
 	case config.NotificationsView:
 		for _, cfg := range ctx.Config.NotificationsSections {
 			configs = append(configs, cfg.ToSectionConfig())
@@ -75,12 +68,41 @@ func (ctx *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {
 			configs = append(configs, cfg.ToSectionConfig())
 		}
 	case config.ActionsView:
-		for _, cfg := range ctx.Config.ActionsSections {
+		for _, cfg := range ctx.actionSectionConfigs() {
 			configs = append(configs, cfg.ToSectionConfig())
 		}
 	}
 
 	return append([]config.SectionConfig{{Title: ""}}, configs...)
+}
+
+func (ctx *ProgramContext) actionSectionConfigs() []config.ActionsSectionConfig {
+	configured := make([]config.ActionsSectionConfig, 0, len(ctx.Config.ActionsSections))
+	for _, cfg := range ctx.Config.ActionsSections {
+		if actionsRepoFromFilters(cfg.Filters) != "" {
+			configured = append(configured, cfg)
+		}
+	}
+	if len(configured) > 0 {
+		return configured
+	}
+
+	repos := common.ExpandRepoPaths(ctx.Config.RepoPaths)
+	configured = make([]config.ActionsSectionConfig, 0, len(repos))
+	for _, repo := range repos {
+		configured = append(configured, config.ActionsSectionConfig{Title: repo.Name, Filters: "repo:" + repo.Name})
+	}
+	return configured
+}
+
+func actionsRepoFromFilters(filters string) string {
+	for _, token := range strings.Fields(filters) {
+		value, ok := strings.CutPrefix(token, "repo:")
+		if ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (ctx *ProgramContext) PreviewCursorPosition() tea.Position {

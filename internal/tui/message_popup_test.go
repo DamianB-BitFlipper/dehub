@@ -38,7 +38,6 @@ func newMessagePopupTestModel(t *testing.T) Model {
 	m.footer.UpdateProgramContext(ctx)
 	m.prView.UpdateProgramContext(ctx)
 	m.issueSidebar.UpdateProgramContext(ctx)
-	m.branchSidebar.UpdateProgramContext(ctx)
 	m.notificationView.UpdateProgramContext(ctx)
 	m.tabs.UpdateProgramContext(ctx)
 	m.sidebar.UpdateProgramContext(ctx)

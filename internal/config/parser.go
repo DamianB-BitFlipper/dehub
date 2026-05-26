@@ -67,8 +67,6 @@ func (a *ViewType) UnmarshalJSON(b []byte) error {
 		*a = PRsView
 	case "issues":
 		*a = IssuesView
-	case "repo":
-		*a = RepoView
 	case "actions":
 		*a = ActionsView
 	}
@@ -80,7 +78,6 @@ const (
 	NotificationsView ViewType = "notifications"
 	PRsView           ViewType = "prs"
 	IssuesView        ViewType = "issues"
-	RepoView          ViewType = "repo"
 	ActionsView       ViewType = "actions"
 )
 
@@ -209,21 +206,17 @@ type LayoutConfig struct {
 }
 
 type Defaults struct {
-	Preview                PreviewConfig `yaml:"preview"`
-	PrsLimit               int           `yaml:"prsLimit"`
-	PrApproveComment       string        `yaml:"prApproveComment,omitempty"`
-	IssuesLimit            int           `yaml:"issuesLimit"`
-	NotificationsLimit     int           `yaml:"notificationsLimit"`
-	ActionsLimit           int           `yaml:"actionsLimit"`
-	View                   ViewType      `yaml:"view"`
-	Layout                 LayoutConfig  `yaml:"layout,omitempty"`
-	RefetchIntervalMinutes int           `yaml:"refetchIntervalMinutes,omitempty"`
-	DateFormat             string        `yaml:"dateFormat,omitempty"`
-}
-
-type RepoConfig struct {
-	BranchesRefetchIntervalSeconds int `yaml:"branchesRefetchIntervalSeconds,omitempty"`
-	PrsRefetchIntervalSeconds      int `yaml:"prsRefetchIntervalSeconds,omitempty"`
+	Preview                       PreviewConfig `yaml:"preview"`
+	PrsLimit                      int           `yaml:"prsLimit"`
+	PrApproveComment              string        `yaml:"prApproveComment,omitempty"`
+	IssuesLimit                   int           `yaml:"issuesLimit"`
+	NotificationsLimit            int           `yaml:"notificationsLimit"`
+	ActionsLimit                  int           `yaml:"actionsLimit"`
+	View                          ViewType      `yaml:"view"`
+	Layout                        LayoutConfig  `yaml:"layout,omitempty"`
+	RefetchIntervalMinutes        int           `yaml:"refetchIntervalMinutes,omitempty"`
+	PreviewRefreshIntervalSeconds int           `yaml:"previewRefreshIntervalSeconds,omitempty"`
+	DateFormat                    string        `yaml:"dateFormat,omitempty"`
 }
 
 type Keybinding struct {
@@ -253,7 +246,6 @@ type Keybindings struct {
 	Universal     []Keybinding `yaml:"universal,omitempty"`
 	Issues        []Keybinding `yaml:"issues,omitempty"`
 	Prs           []Keybinding `yaml:"prs,omitempty"`
-	Branches      []Keybinding `yaml:"branches,omitempty"`
 	Notifications []Keybinding `yaml:"notifications,omitempty"`
 	Actions       []Keybinding `yaml:"actions,omitempty"`
 }
@@ -348,7 +340,6 @@ type Config struct {
 	IssuesSections           []IssuesSectionConfig        `yaml:"issuesSections"`
 	NotificationsSections    []NotificationsSectionConfig `yaml:"notificationsSections"`
 	ActionsSections          []ActionsSectionConfig       `yaml:"actionsSections"`
-	Repo                     RepoConfig                   `yaml:"repo,omitempty"`
 	Defaults                 Defaults                     `yaml:"defaults"`
 	Keybindings              Keybindings                  `yaml:"keybindings"`
 	RepoPaths                map[string]string            `yaml:"repoPaths"`
@@ -379,13 +370,14 @@ func (parser ConfigParser) getDefaultConfig() Config {
 				Height:   0.60,
 				Position: "auto",
 			},
-			PrsLimit:               20,
-			PrApproveComment:       "LGTM",
-			IssuesLimit:            20,
-			NotificationsLimit:     20,
-			ActionsLimit:           20,
-			View:                   PRsView,
-			RefetchIntervalMinutes: 30,
+			PrsLimit:                      20,
+			PrApproveComment:              "LGTM",
+			IssuesLimit:                   20,
+			NotificationsLimit:            20,
+			ActionsLimit:                  20,
+			View:                          PRsView,
+			RefetchIntervalMinutes:        30,
+			PreviewRefreshIntervalSeconds: 10,
 			Layout: LayoutConfig{
 				Prs: PrsLayoutConfig{
 					UpdatedAt: ColumnConfig{
@@ -457,10 +449,6 @@ func (parser ConfigParser) getDefaultConfig() Config {
 				},
 			},
 		},
-		Repo: RepoConfig{
-			BranchesRefetchIntervalSeconds: 30,
-			PrsRefetchIntervalSeconds:      60,
-		},
 		PRSections: []PrsSectionConfig{
 			{
 				Title:   "My Pull Requests",
@@ -523,12 +511,7 @@ func (parser ConfigParser) getDefaultConfig() Config {
 				Filters: "reason:team-mention",
 			},
 		},
-		ActionsSections: []ActionsSectionConfig{
-			{Title: "All", Filters: ""},
-			{Title: "Failed", Filters: "status:failure"},
-			{Title: "In Progress", Filters: "status:in_progress"},
-			{Title: "My Runs", Filters: "actor:@me"},
-		},
+		ActionsSections: []ActionsSectionConfig{},
 		Keybindings: Keybindings{
 			Universal:     []Keybinding{},
 			Issues:        []Keybinding{},
@@ -871,11 +854,6 @@ func (parser ConfigParser) unmarshalConfigWithDefaults() (Config, error) {
 	err := parser.k.UnmarshalWithConf("", &cfg, koanf.UnmarshalConf{Tag: "yaml"})
 	if err != nil {
 		return Config{}, err
-	}
-
-	repoFF := IsFeatureEnabled(FF_REPO_VIEW)
-	if cfg.Defaults.View == RepoView && !repoFF {
-		cfg.Defaults.View = PRsView
 	}
 
 	err = validate.Struct(cfg)

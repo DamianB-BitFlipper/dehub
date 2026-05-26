@@ -94,7 +94,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 		if m.IsPromptConfirmationFocused() {
-			if m.GetPromptConfirmationAction() == "create_pr" {
+			if m.GetPromptConfirmationAction() == "create_pr" || m.GetPromptConfirmationAction() == "edit_pr" {
 				switch msg.String() {
 				case "ctrl+c", "esc":
 					m.CreatePRForm.Reset()
@@ -102,12 +102,20 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 					return m, cmd
 
 				case "ctrl+d":
-					cmd, err = m.createPR(
-						m.CreatePRForm.Title(),
-						m.CreatePRForm.Body(),
-						m.CreatePRForm.Head(),
-						m.CreatePRForm.Base(),
-					)
+					if m.GetPromptConfirmationAction() == "edit_pr" {
+						cmd, err = m.editPR(
+							m.CreatePRForm.Title(),
+							m.CreatePRForm.Body(),
+							m.CreatePRForm.Base(),
+						)
+					} else {
+						cmd, err = m.createPR(
+							m.CreatePRForm.Title(),
+							m.CreatePRForm.Body(),
+							m.CreatePRForm.Head(),
+							m.CreatePRForm.Base(),
+						)
+					}
 					if err != nil {
 						m.Ctx.Error = err
 						return m, nil
@@ -214,90 +222,10 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 	case tasks.UpdatePRMsg:
-		for i, currPr := range m.Prs {
-			if currPr.Primary.Number != msg.PrNumber {
-				continue
-			}
-
-			if msg.IsClosed != nil {
-				if *msg.IsClosed {
-					currPr.Primary.State = "CLOSED"
-				} else {
-					currPr.Primary.State = "OPEN"
-				}
-			}
-			if msg.NewComment != nil {
-				currPr.Enriched.Comments.Nodes = append(
-					currPr.Enriched.Comments.Nodes, *msg.NewComment,
-				)
-			}
-			if msg.ThreadReply != nil {
-				for j := range currPr.Enriched.ReviewThreads.Nodes {
-					thread := &currPr.Enriched.ReviewThreads.Nodes[j]
-					if thread.Id == msg.ThreadReply.ThreadId {
-						thread.Comments.Nodes = append(thread.Comments.Nodes, msg.ThreadReply.Comment)
-						thread.Comments.TotalCount++
-						break
-					}
-				}
-			}
-			if msg.ThreadResolved != nil {
-				for j := range currPr.Enriched.ReviewThreads.Nodes {
-					thread := &currPr.Enriched.ReviewThreads.Nodes[j]
-					if thread.Id == msg.ThreadResolved.ThreadId {
-						thread.IsResolved = msg.ThreadResolved.IsResolved
-						break
-					}
-				}
-			}
-			if msg.AddedAssignees != nil {
-				currPr.Primary.Assignees.Nodes = addAssignees(
-					currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes,
-				)
-			}
-			if msg.RemovedAssignees != nil {
-				currPr.Primary.Assignees.Nodes = removeAssignees(
-					currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes,
-				)
-			}
-			if msg.AddedReviewers != nil {
-				currPr.Primary.ReviewRequests.Nodes = addReviewRequests(
-					currPr.Primary.ReviewRequests.Nodes, msg.AddedReviewers.Nodes,
-				)
-				if currPr.IsEnriched {
-					currPr.Enriched.ReviewRequests.Nodes = addReviewRequests(
-						currPr.Enriched.ReviewRequests.Nodes, msg.AddedReviewers.Nodes,
-					)
-				}
-			}
-			if msg.RemovedReviewers != nil {
-				currPr.Primary.ReviewRequests.Nodes = removeReviewRequests(
-					currPr.Primary.ReviewRequests.Nodes, msg.RemovedReviewers.Nodes,
-				)
-				if currPr.IsEnriched {
-					currPr.Enriched.ReviewRequests.Nodes = removeReviewRequests(
-						currPr.Enriched.ReviewRequests.Nodes, msg.RemovedReviewers.Nodes,
-					)
-				}
-			}
-			if msg.Labels != nil {
-				currPr.Primary.Labels.Nodes = msg.Labels.Nodes
-			}
-			if msg.ReadyForReview != nil && *msg.ReadyForReview {
-				currPr.Primary.IsDraft = false
-			}
-			if msg.IsDraft != nil {
-				currPr.Primary.IsDraft = *msg.IsDraft
-			}
-			if msg.IsMerged != nil && *msg.IsMerged {
-				currPr.Primary.State = "MERGED"
-				currPr.Primary.Mergeable = ""
-			}
-			m.Prs[i] = currPr
+		if m.applyUpdatePRMsg(msg) {
 			m.sortPRs()
 			m.SetIsLoading(false)
 			m.Table.SetRows(m.BuildRows())
-			break
 		}
 
 	case SectionPullRequestsFetchedMsg:
@@ -379,6 +307,110 @@ func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
 		m.Prs[i].IsEnriched = true
 		m.Prs[i].Enriched = data
 	}
+}
+
+func (m *Model) applyUpdatePRMsg(msg tasks.UpdatePRMsg) bool {
+	for i, currPr := range m.Prs {
+		if currPr.Primary == nil || currPr.Primary.Number != msg.PrNumber {
+			continue
+		}
+
+		if msg.IsClosed != nil {
+			if *msg.IsClosed {
+				currPr.Primary.State = "CLOSED"
+			} else {
+				currPr.Primary.State = "OPEN"
+			}
+		}
+		if msg.NewComment != nil {
+			currPr.Enriched.Comments.Nodes = append(
+				currPr.Enriched.Comments.Nodes, *msg.NewComment,
+			)
+		}
+		if msg.ThreadReply != nil {
+			for j := range currPr.Enriched.ReviewThreads.Nodes {
+				thread := &currPr.Enriched.ReviewThreads.Nodes[j]
+				if thread.Id == msg.ThreadReply.ThreadId {
+					thread.Comments.Nodes = append(thread.Comments.Nodes, msg.ThreadReply.Comment)
+					thread.Comments.TotalCount++
+					break
+				}
+			}
+		}
+		if msg.ThreadResolved != nil {
+			for j := range currPr.Enriched.ReviewThreads.Nodes {
+				thread := &currPr.Enriched.ReviewThreads.Nodes[j]
+				if thread.Id == msg.ThreadResolved.ThreadId {
+					thread.IsResolved = msg.ThreadResolved.IsResolved
+					break
+				}
+			}
+		}
+		if msg.AddedAssignees != nil {
+			currPr.Primary.Assignees.Nodes = addAssignees(
+				currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes,
+			)
+		}
+		if msg.RemovedAssignees != nil {
+			currPr.Primary.Assignees.Nodes = removeAssignees(
+				currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes,
+			)
+		}
+		if msg.AddedReviewers != nil {
+			currPr.Primary.ReviewRequests.Nodes = addReviewRequests(
+				currPr.Primary.ReviewRequests.Nodes, msg.AddedReviewers.Nodes,
+			)
+			if currPr.IsEnriched {
+				currPr.Enriched.ReviewRequests.Nodes = addReviewRequests(
+					currPr.Enriched.ReviewRequests.Nodes, msg.AddedReviewers.Nodes,
+				)
+			}
+		}
+		if msg.RemovedReviewers != nil {
+			currPr.Primary.ReviewRequests.Nodes = removeReviewRequests(
+				currPr.Primary.ReviewRequests.Nodes, msg.RemovedReviewers.Nodes,
+			)
+			if currPr.IsEnriched {
+				currPr.Enriched.ReviewRequests.Nodes = removeReviewRequests(
+					currPr.Enriched.ReviewRequests.Nodes, msg.RemovedReviewers.Nodes,
+				)
+			}
+		}
+		if msg.Labels != nil {
+			currPr.Primary.Labels.Nodes = msg.Labels.Nodes
+		}
+		if msg.Title != nil {
+			currPr.Primary.Title = *msg.Title
+			if currPr.IsEnriched {
+				currPr.Enriched.Title = *msg.Title
+			}
+		}
+		if msg.Body != nil {
+			currPr.Primary.Body = *msg.Body
+			if currPr.IsEnriched {
+				currPr.Enriched.Body = *msg.Body
+			}
+		}
+		if msg.BaseRefName != nil {
+			currPr.Primary.BaseRefName = *msg.BaseRefName
+			if currPr.IsEnriched {
+				currPr.Enriched.BaseRefName = *msg.BaseRefName
+			}
+		}
+		if msg.ReadyForReview != nil && *msg.ReadyForReview {
+			currPr.Primary.IsDraft = false
+		}
+		if msg.IsDraft != nil {
+			currPr.Primary.IsDraft = *msg.IsDraft
+		}
+		if msg.IsMerged != nil && *msg.IsMerged {
+			currPr.Primary.State = "MERGED"
+			currPr.Primary.Mergeable = ""
+		}
+		m.Prs[i] = currPr
+		return true
+	}
+	return false
 }
 
 func (m *Model) mergeRefreshedPRs(refreshed []prrow.Data) {
@@ -464,7 +496,7 @@ func (m *Model) updateSortHeader() {
 }
 
 func (m *Model) GetPromptConfirmation() string {
-	if m.IsPromptConfirmationShown && m.GetPromptConfirmationAction() == "create_pr" {
+	if m.IsPromptConfirmationShown && (m.GetPromptConfirmationAction() == "create_pr" || m.GetPromptConfirmationAction() == "edit_pr") {
 		return ""
 	}
 	return m.BaseModel.GetPromptConfirmation()

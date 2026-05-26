@@ -129,9 +129,10 @@ func makeStyles(appTheme *theme.Theme) styles {
 
 	errorBgStyle := lipgloss.NewStyle().Background(lipgloss.Darken(p.Red, 0.8))
 	bg := lipgloss.Darken(p.Bg, 0.4)
-	brighterBg := lipgloss.Darken(p.Bg, 0.1)
+	selectedBg := lipgloss.Lighten(p.BrightBlue, 0.2)
 	unfocusedBg := lipgloss.Darken(focusedColor, 0.5)
 	unfocusedFg := lipgloss.Darken(focusedColor, 0.1)
+	metadataColor := lipgloss.Color("245")
 	baseTitleStyle := lipgloss.NewStyle().Bold(true).Margin(0)
 
 	s := styles{
@@ -145,7 +146,7 @@ func makeStyles(appTheme *theme.Theme) styles {
 		focusedPaneTitleBarStyle:   lipgloss.NewStyle().Bold(true).PaddingRight(0).MarginBottom(1),
 		unfocusedPaneTitleBarStyle: lipgloss.NewStyle().Bold(true).PaddingRight(0).MarginBottom(1),
 
-		normalItemDescStyle: lipgloss.NewStyle().Foreground(colors.faintColor).PaddingLeft(4),
+		normalItemDescStyle: lipgloss.NewStyle().Foreground(metadataColor).PaddingLeft(4),
 
 		paneItem: paneItemStyles{
 			selectedStyle: lipgloss.NewStyle().
@@ -155,9 +156,9 @@ func makeStyles(appTheme *theme.Theme) styles {
 				BorderForeground(unfocusedBg),
 
 			focusedSelectedStyle: lipgloss.NewStyle().
-				Background(brighterBg).
-				BorderForeground(focusedColor).
-				BorderBackground(brighterBg).
+				Background(selectedBg).
+				BorderForeground(selectedBg).
+				BorderBackground(selectedBg).
 				Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true),
 
 			selectedTitleStyle: lipgloss.NewStyle().
@@ -168,23 +169,23 @@ func makeStyles(appTheme *theme.Theme) styles {
 			focusedTitleStyle: lipgloss.NewStyle().Bold(true).Foreground(p.White),
 			focusedSelectedTitleStyle: lipgloss.NewStyle().
 				Bold(true).
-				Foreground(focusedColor).
-				Background(brighterBg),
+				Foreground(p.Black).
+				Background(selectedBg),
 			unfocusedTitleStyle: lipgloss.NewStyle().
 				Bold(true).
 				Foreground(colors.subtleWhite),
 
 			selectedDescStyle: lipgloss.NewStyle().
-				Foreground(p.White).
+				Foreground(metadataColor).
 				PaddingLeft(2).
 				Background(bg),
 			descStyle: lipgloss.NewStyle().
-				Foreground(colors.faintColor).
+				Foreground(metadataColor).
 				PaddingLeft(2),
 			focusedSelectedDescStyle: lipgloss.NewStyle().
-				Foreground(p.White).
+				Foreground(p.Black).
 				PaddingLeft(2).
-				Background(brighterBg),
+				Background(selectedBg),
 		},
 
 		paneStyle: lipgloss.NewStyle().BorderRight(true).BorderStyle(
@@ -200,14 +201,14 @@ func makeStyles(appTheme *theme.Theme) styles {
 			Foreground(colors.warnColor).
 			SetString(constants.CanceledIcon),
 		skippedGlyph: lipgloss.NewStyle().
-			Foreground(colors.faintColor).
+			Foreground(metadataColor).
 			SetString(constants.SkippedIcon),
 		neutralGlyph: lipgloss.NewStyle().
 			Foreground(colors.whiteColor).
 			SetString(constants.NeutralIcon),
 		waitingGlyph: lipgloss.NewStyle().Foreground(p.Yellow).SetString(constants.WaitingIcon),
 		pendingGlyph: lipgloss.NewStyle().
-			Foreground(colors.faintColor).
+			Foreground(metadataColor).
 			SetString(constants.PendingIcon),
 		failureGlyph: lipgloss.NewStyle().Foreground(p.Red).SetString(constants.FailureIcon),
 		successGlyph: lipgloss.NewStyle().
@@ -242,12 +243,18 @@ func makeStyles(appTheme *theme.Theme) styles {
 		s.focusedPaneTitleStyle = baseTitleStyle.Foreground(appTheme.InvertedText)
 		s.unfocusedPaneTitleStyle = baseTitleStyle.Foreground(appTheme.PrimaryText)
 		s.faintFgStyle = lipgloss.NewStyle().Foreground(appTheme.FaintText)
+		s.normalItemDescStyle = s.normalItemDescStyle.Foreground(appTheme.FaintText)
+		s.paneItem.descStyle = s.paneItem.descStyle.Foreground(appTheme.FaintText)
+		s.paneItem.selectedDescStyle = s.paneItem.selectedDescStyle.Foreground(appTheme.FaintText)
+		s.paneItem.focusedSelectedDescStyle = s.paneItem.focusedSelectedDescStyle.Foreground(appTheme.FaintText)
 		s.paneStyle = s.paneStyle.BorderForeground(appTheme.FaintBorder)
 		s.focusedPaneStyle = s.focusedPaneStyle.BorderForeground(appTheme.PrimaryBorder)
 		s.lineNumbersStyle = s.lineNumbersStyle.Foreground(appTheme.FaintText)
 		s.noLogsStyle = s.noLogsStyle.Foreground(appTheme.FaintText)
 		s.failureGlyph = s.failureGlyph.Foreground(appTheme.ErrorText)
 		s.successGlyph = s.successGlyph.Foreground(appTheme.SuccessText)
+		s.skippedGlyph = s.skippedGlyph.Foreground(appTheme.FaintText)
+		s.pendingGlyph = s.pendingGlyph.Foreground(appTheme.FaintText)
 		s.canceledGlyph = s.canceledGlyph.Foreground(appTheme.WarningText)
 		s.keyStyle = s.keyStyle.Background(appTheme.SelectedBackground).Foreground(appTheme.PrimaryText)
 	}

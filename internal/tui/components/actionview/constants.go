@@ -7,15 +7,7 @@ import (
 )
 
 const (
-	headerHeight    = 4
-	footerHeight    = 0
-	smallScreen     = 130
-	paneTitleHeight = 1
-
-	unfocusedLargePaneWidth = 20
-	focusedLargePaneWidth   = 40
-
-	focusedSmallPaneWidth = 25
+	largePaneWidth = 24
 )
 
 const (
@@ -40,6 +32,41 @@ const (
 	ListSymbol   = "≡"
 	Ellipsis     = "…"
 )
+
+const emptySetIllustration = "            ╱   \n" +
+	"    ..-··-.╱    \n" +
+	"  .´      ╱ `.  \n" +
+	" /       ╱    \\ \n" +
+	".       ╱      .\n" +
+	":      ╱       :\n" +
+	"'     ╱        '\n" +
+	" \\   ╱        / \n" +
+	"  `.╱       .´  \n" +
+	"   ╱`·-..-·´    \n" +
+	"  ╱             \n"
+
+const stopSignArt = "    _________    \n" +
+	"   /         \\   \n" +
+	"  /    .-.    \\  \n" +
+	" /     | |     \\ \n" +
+	"|      | |      |\n" +
+	"|      | |      |\n" +
+	"|      !_!      |\n" +
+	" \\             / \n" +
+	"  \\     O     /  \n" +
+	"   \\         /   \n" +
+	"    ‾‾‾‾‾‾‾‾‾    \n"
+
+const checkmarkSignArt = "    ..-··-..    \n" +
+	"  .´        `.  \n" +
+	" /        /   \\ \n" +
+	".        /     .\n" +
+	":    \\  /      :\n" +
+	"'     \\/       '\n" +
+	" \\            / \n" +
+	"  `.        .´  \n" +
+	"    `·-..-·´    \n" +
+	"                \n"
 
 var LogsFrames = spinner.Spinner{
 	Frames: []string{

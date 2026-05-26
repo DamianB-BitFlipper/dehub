@@ -6,9 +6,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/dlvhdr/gh-dash/v4/internal/checks"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
-	checks "github.com/dlvhdr/x/gh-checks"
 )
 
 func (m *Model) renderCommits() string {

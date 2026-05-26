@@ -212,8 +212,7 @@ func init() {
 
 	rootCmd.Run = func(_ *cobra.Command, args []string) {
 		var repo string
-		repos := config.IsFeatureEnabled(config.FF_REPO_VIEW)
-		if repos && len(args) > 0 {
+		if len(args) > 0 {
 			repo = args[0]
 		}
 

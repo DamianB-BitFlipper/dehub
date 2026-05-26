@@ -10,6 +10,11 @@ import (
 type ActionsKeyMap struct {
 	ToggleSmartFiltering key.Binding
 	SortOrder            key.Binding
+	Rerun                key.Binding
+	RerunFailed          key.Binding
+	Cancel               key.Binding
+	FocusNextPane        key.Binding
+	FocusPrevPane        key.Binding
 }
 
 var ActionsKeys = ActionsKeyMap{
@@ -21,12 +26,37 @@ var ActionsKeys = ActionsKeyMap{
 		key.WithKeys("S"),
 		key.WithHelp("S", "sort order"),
 	),
+	Rerun: key.NewBinding(
+		key.WithKeys("ctrl+r"),
+		key.WithHelp("ctrl+r", "rerun workflow"),
+	),
+	RerunFailed: key.NewBinding(
+		key.WithKeys("ctrl+f"),
+		key.WithHelp("ctrl+f", "rerun failed jobs"),
+	),
+	Cancel: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "cancel workflow"),
+	),
+	FocusNextPane: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "focus next pane"),
+	),
+	FocusPrevPane: key.NewBinding(
+		key.WithKeys("shift+tab"),
+		key.WithHelp("shift+tab", "focus prev pane"),
+	),
 }
 
 func ActionsFullHelp() []key.Binding {
 	return enabledBindings(
 		ActionsKeys.ToggleSmartFiltering,
 		ActionsKeys.SortOrder,
+		ActionsKeys.Rerun,
+		ActionsKeys.RerunFailed,
+		ActionsKeys.Cancel,
+		ActionsKeys.FocusNextPane,
+		ActionsKeys.FocusPrevPane,
 	)
 }
 
@@ -55,6 +85,16 @@ func RebindActionsKeys(keys []config.Keybinding) error {
 			ActionsKeys.ToggleSmartFiltering = actionsKey.NewBinding(&ActionsKeys.ToggleSmartFiltering)
 		case "sortOrder":
 			ActionsKeys.SortOrder = actionsKey.NewBinding(&ActionsKeys.SortOrder)
+		case "rerun":
+			ActionsKeys.Rerun = actionsKey.NewBinding(&ActionsKeys.Rerun)
+		case "rerunFailed":
+			ActionsKeys.RerunFailed = actionsKey.NewBinding(&ActionsKeys.RerunFailed)
+		case "cancel":
+			ActionsKeys.Cancel = actionsKey.NewBinding(&ActionsKeys.Cancel)
+		case "focusNextPane":
+			ActionsKeys.FocusNextPane = actionsKey.NewBinding(&ActionsKeys.FocusNextPane)
+		case "focusPrevPane":
+			ActionsKeys.FocusPrevPane = actionsKey.NewBinding(&ActionsKeys.FocusPrevPane)
 		default:
 			continue
 		}

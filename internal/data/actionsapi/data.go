@@ -11,8 +11,9 @@ import (
 
 	"charm.land/log/v2"
 	gh "github.com/cli/go-gh/v2/pkg/api"
-	checks "github.com/dlvhdr/x/gh-checks"
 	"github.com/shurcooL/githubv4"
+
+	"github.com/dlvhdr/gh-dash/v4/internal/checks"
 )
 
 const (
@@ -214,31 +215,12 @@ type PRCheckRunsQuery struct {
 	} `graphql:"resource(url: $url)"`
 }
 
-var (
-	gqlClient  *gh.GraphQLClient
-	httpClient *http.Client
-)
-
-func SetClient(c *gh.GraphQLClient) {
-	gqlClient = c
-}
-
 func getGraphQLClient() (*gh.GraphQLClient, error) {
-	var err error
-	if gqlClient != nil {
-		return gqlClient, nil
-	}
-	gqlClient, err = gh.DefaultGraphQLClient()
-	return gqlClient, err
+	return gh.DefaultGraphQLClient()
 }
 
 func getHTTPClient() (*http.Client, error) {
-	var err error
-	if httpClient != nil {
-		return httpClient, nil
-	}
-	httpClient, err = gh.DefaultHTTPClient()
-	return httpClient, err
+	return gh.DefaultHTTPClient()
 }
 
 func FetchPRCheckRuns(repo string, prNumber string, cursor string) (PRCheckRunsQuery, error) {

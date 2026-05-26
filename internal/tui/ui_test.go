@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 	"text/template"
@@ -21,7 +22,6 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/branchsidebar"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/footer"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issueview"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/notificationrow"
@@ -154,21 +154,13 @@ func (l localRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 // 	data.SetClient(client)
 // }
 
-func TestGetCurrentViewSections_RepoViewWithNilRepo(t *testing.T) {
-	// This test verifies that getCurrentViewSections returns an empty slice
-	// when in RepoView but m.repo is nil (before data is loaded).
-	// Previously this would return []section.Section{nil} which caused a panic.
-	m := Model{
-		ctx: &context.ProgramContext{
-			View: config.RepoView,
-		},
-		repo: nil,
-	}
-
-	sections := m.getCurrentViewSections()
-
-	require.NotNil(t, sections, "sections should not be nil")
-	require.Empty(t, sections, "sections should be empty when repo is nil")
+func initTestGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	repoPath := dir + "/repo"
+	require.NoError(t, exec.Command("git", "init", repoPath).Run())
+	require.NoError(t, exec.Command("git", "-C", repoPath, "remote", "add", "origin", "https://github.com/owner/repo.git").Run())
+	return dir
 }
 
 func TestPromptConfirmation_NilSection(t *testing.T) {
@@ -279,7 +271,7 @@ func TestSwitchSelectedViewBack(t *testing.T) {
 
 	ctx := &context.ProgramContext{
 		Config: &cfg,
-		View:   config.IssuesView,
+		View:   config.ActionsView,
 	}
 	ctx.Theme = theme.ParseTheme(ctx.Config)
 	ctx.Styles = context.InitStyles(ctx.Theme)
@@ -297,11 +289,12 @@ func TestSwitchSelectedViewBack(t *testing.T) {
 	require.Equal(t, config.PRsView, m.ctx.View)
 }
 
-func TestMaybeSchedulePRWatch_ActivityTab(t *testing.T) {
+func TestReconcileVisibleRefreshesSchedulesPRPreview(t *testing.T) {
 	ctx := &context.ProgramContext{}
 	prView := prview.NewModel(ctx)
+	url := "https://github.com/owner/repo/pull/1"
 	prView.SetRow(&prrow.Data{
-		Primary: &data.PullRequestData{Url: "https://github.com/owner/repo/pull/1"},
+		Primary: &data.PullRequestData{Url: url},
 	})
 	prView.GoToActivityTab()
 
@@ -309,27 +302,73 @@ func TestMaybeSchedulePRWatch_ActivityTab(t *testing.T) {
 	sidebarModel.IsOpen = true
 	m := Model{prView: prView, sidebar: sidebarModel}
 
-	cmd := m.maybeSchedulePRWatch()
+	cmd := m.reconcileVisibleRefreshes()
 
 	require.NotNil(t, cmd)
-	require.Equal(t, "https://github.com/owner/repo/pull/1", m.prWatchURL)
+	require.Contains(t, m.visibleRefreshes, "pr-preview:"+url)
 }
 
-func TestMaybeSchedulePRWatch_OverviewWithoutPendingChecks(t *testing.T) {
+func TestReconcileVisibleRefreshesSchedulesPRPreviewOutsideActivityTab(t *testing.T) {
 	ctx := &context.ProgramContext{}
 	prView := prview.NewModel(ctx)
+	url := "https://github.com/owner/repo/pull/1"
 	prView.SetRow(&prrow.Data{
-		Primary: &data.PullRequestData{Url: "https://github.com/owner/repo/pull/1"},
+		Primary: &data.PullRequestData{Url: url},
 	})
 
 	sidebarModel := sidebar.NewModel()
 	sidebarModel.IsOpen = true
-	m := Model{prView: prView, sidebar: sidebarModel, prWatchURL: "stale"}
+	m := Model{prView: prView, sidebar: sidebarModel}
 
-	cmd := m.maybeSchedulePRWatch()
+	cmd := m.reconcileVisibleRefreshes()
 
 	require.NotNil(t, cmd)
-	require.Equal(t, "https://github.com/owner/repo/pull/1", m.prWatchURL)
+	require.Contains(t, m.visibleRefreshes, "pr-preview:"+url)
+}
+
+func TestVisibleRefreshTickReconcilesWhenGenerationIsStale(t *testing.T) {
+	ctx := &context.ProgramContext{View: config.PRsView}
+	prView := prview.NewModel(ctx)
+	url := "https://github.com/owner/repo/pull/1"
+	prView.SetRow(&prrow.Data{
+		Primary: &data.PullRequestData{Url: url},
+	})
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	m := Model{ctx: ctx, prView: prView, sidebar: sidebarModel, visibleRefreshes: map[string]int{}, visibleRefreshGen: 10}
+	target := visibleRefreshTarget{key: "pr-preview:" + url, kind: visibleRefreshPRPreview, url: url, interval: 10 * time.Second}
+
+	newModel, cmd := m.Update(visibleRefreshTick{target: target, generation: 1})
+	m = newModel.(Model)
+
+	require.NotNil(t, cmd)
+	require.Contains(t, m.visibleRefreshes, target.key)
+	require.Equal(t, 11, m.visibleRefreshes[target.key])
+}
+
+func TestVisibleRefreshTargetsUsesConfiguredPRPreviewInterval(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+	cfg.Defaults.PreviewRefreshIntervalSeconds = 3
+
+	ctx := &context.ProgramContext{Config: &cfg}
+	prView := prview.NewModel(ctx)
+	url := "https://github.com/owner/repo/pull/1"
+	prView.SetRow(&prrow.Data{Primary: &data.PullRequestData{Url: url}})
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	m := Model{ctx: ctx, prView: prView, sidebar: sidebarModel}
+
+	targets := m.visibleRefreshTargets()
+
+	require.NotEmpty(t, targets)
+	require.Equal(t, visibleRefreshPRPreview, targets[0].kind)
+	require.Equal(t, 3*time.Second, targets[0].interval)
 }
 
 func TestVisibleRefreshTargetsIncludesCurrentPRSection(t *testing.T) {
@@ -1045,7 +1084,6 @@ func TestQClosesHelpWithoutQuitting(t *testing.T) {
 		tabs:             tabs.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 	}
 	m.footer.ShowAll = true
@@ -1364,7 +1402,6 @@ func TestSyncSidebar_NoOpWhenSidebarClosed(t *testing.T) {
 		tabs:             tabs.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 	}
 
@@ -1490,7 +1527,6 @@ func TestPreviewFocusRoutesNavigationToSidebar(t *testing.T) {
 		footer:           footer.NewModel(ctx),
 		prView:           prViewModel,
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 		sidebar:          sidebarModel,
 		tabs:             tabs.NewModel(ctx),
@@ -1604,7 +1640,6 @@ func TestOpenPRCommentInputNoScrollPreservesSidebarOffset(t *testing.T) {
 		tabs:          tabs.NewModel(ctx),
 		prView:        prViewModel,
 		issueSidebar:  issueview.NewModel(ctx),
-		branchSidebar: branchsidebar.NewModel(ctx),
 	}
 	m.prView.GoToActivityTab()
 	m.prView.SetRow(&pr)
@@ -1749,7 +1784,6 @@ func TestCyclePreviewOpensRightWhenClosed(t *testing.T) {
 		tabs:             tabs.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 	}
 
@@ -1812,7 +1846,6 @@ func TestCyclePreviewCyclesRightBottomHidden(t *testing.T) {
 		tabs:             tabs.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 	}
 
@@ -1897,7 +1930,6 @@ func TestView_ClosingSidebarFromBottomMode_NoExtraLine(t *testing.T) {
 		tabs:             tabs.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 	}
 
@@ -2247,7 +2279,6 @@ func TestRefresh_ClearsEnrichmentCache(t *testing.T) {
 		tabs:             tabs.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 	}
 
@@ -2328,10 +2359,8 @@ func TestChecksRefreshFetchedUpdatesNotificationSubjectPR(t *testing.T) {
 		footer:           footer.NewModel(ctx),
 		prView:           prview.NewModel(ctx),
 		issueSidebar:     issueview.NewModel(ctx),
-		branchSidebar:    branchsidebar.NewModel(ctx),
 		notificationView: notificationview.NewModel(ctx),
 		tabs:             tabs.NewModel(ctx),
-		prWatchURL:       url,
 	}
 	m.sidebar.IsOpen = true
 	m.prView.SetRow(pr)
@@ -2343,7 +2372,8 @@ func TestChecksRefreshFetchedUpdatesNotificationSubjectPR(t *testing.T) {
 		Title:  "updated title",
 		Url:    url,
 	}
-	newModel, _ := m.Update(prWatchFetchedMsg{url: url, data: updated})
+	target := visibleRefreshTarget{key: "pr-preview:" + url, kind: visibleRefreshPRPreview, url: url}
+	newModel, _ := m.Update(visibleRefreshFetchedMsg{target: target, data: updated})
 	m = newModel.(Model)
 
 	subject := m.notificationView.GetSubjectPR()

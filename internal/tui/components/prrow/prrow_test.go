@@ -7,7 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	graphql "github.com/cli/shurcooL-graphql"
-	checks "github.com/dlvhdr/x/gh-checks"
+	"github.com/dlvhdr/gh-dash/v4/internal/checks"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"

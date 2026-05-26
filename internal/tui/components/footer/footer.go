@@ -147,10 +147,10 @@ func (m *Model) renderViewButton(view config.ViewType) string {
 		} else {
 			icon = outlineBell
 		}
-		label = ""
+		label = " Notifications"
 	case config.PRsView:
 		icon = ""
-		label = " PRs"
+		label = " Pull Requests"
 	case config.IssuesView:
 		icon = ""
 		label = " Issues"
@@ -198,16 +198,19 @@ func (m *Model) renderViewSwitcher(ctx *context.ProgramContext) string {
 		user = ctx.Styles.Common.FooterStyle.Render("@" + ctx.User)
 	}
 
-	view := lipgloss.JoinHorizontal(
-		lipgloss.Top,
+	parts := []string{
 		ctx.Styles.ViewSwitcher.ViewsSeparator.PaddingLeft(1).
-			Render(m.renderViewButton(config.NotificationsView)),
+			Render(m.renderViewButton(config.PRsView)),
 		ctx.Styles.ViewSwitcher.ViewsSeparator.Render(viewSeparator),
-		m.renderViewButton(config.PRsView),
+	}
+	parts = append(parts,
+		m.renderViewButton(config.ActionsView),
 		ctx.Styles.ViewSwitcher.ViewsSeparator.Render(viewSeparator),
 		m.renderViewButton(config.IssuesView),
 		ctx.Styles.ViewSwitcher.ViewsSeparator.Render(viewSeparator),
-		m.renderViewButton(config.ActionsView),
+		m.renderViewButton(config.NotificationsView),
+	)
+	parts = append(parts,
 		lipgloss.NewStyle().Background(ctx.Styles.Common.FooterStyle.GetBackground()).Foreground(
 			ctx.Styles.ViewSwitcher.ViewsSeparator.GetBackground(),
 		).Render(" "),
@@ -215,6 +218,11 @@ func (m *Model) renderViewSwitcher(ctx *context.ProgramContext) string {
 		ctx.Styles.Common.FooterStyle.Foreground(m.ctx.Theme.FaintText).Render(" • "),
 		user,
 		ctx.Styles.Common.FooterStyle.Foreground(m.ctx.Theme.FaintBorder).Render(" │"),
+	)
+
+	view := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		parts...,
 	)
 
 	return ctx.Styles.ViewSwitcher.Root.Render(view)

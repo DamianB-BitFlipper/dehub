@@ -108,6 +108,13 @@ var (
 	)
 )
 
+// RebindActionsKeybindings applies user overrides to the embedded
+// actionview's local keybindings. These bindings are only consulted when the
+// embedded view has focus (the Details pane of the Actions view, or when
+// logs search is focused). User-configured keys MUST NOT collide with
+// universal parent keybindings (Quit, NextSection, Refresh, etc.) — the
+// parent's main Update loop matches universal keys first and will swallow
+// any conflicting binding before the embedded view ever sees it.
 func RebindActionsKeybindings(bindings []config.Keybinding) error {
 	for _, kb := range bindings {
 		if kb.Builtin == "" {

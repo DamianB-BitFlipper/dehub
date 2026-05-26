@@ -55,7 +55,15 @@ func (m *Model) getPrevSectionId() int {
 }
 
 func (m *Model) getNextSectionId() int {
-	return min((m.currSectionId + 1), len(m.ctx.GetViewSectionsConfig())-1)
+	// Use the live sections slice length, not the config-derived length:
+	// context.GetViewSectionsConfig() always prepends a synthetic search
+	// section that doesn't exist for views like Actions which have no
+	// global search bar.
+	sectionCount := len(m.getCurrentViewSections())
+	if sectionCount == 0 {
+		return m.currSectionId
+	}
+	return min(m.currSectionId+1, sectionCount-1)
 }
 
 type IssueCommandTemplateInput struct {
@@ -100,19 +108,6 @@ func (m *Model) executeKeybinding(key string) tea.Cmd {
 			switch data := currRowData.(type) {
 			case *prrow.Data:
 				return m.runCustomPRCommand(keybinding.Command, data)
-			}
-		}
-	case config.RepoView:
-		for _, keybinding := range m.ctx.Config.Keybindings.Branches {
-			if keybinding.Key != key || keybinding.Command == "" {
-				continue
-			}
-
-			log.Debug("executing keybind", "key", keybinding.Key, "command", keybinding.Command)
-
-			switch data := currRowData.(type) {
-			case *prrow.Data:
-				return m.runCustomBranchCommand(keybinding.Command, data)
 			}
 		}
 	case config.NotificationsView:

@@ -136,8 +136,13 @@ func GetRepo(dir string) (*Repo, error) {
 		return nil, err
 	}
 
+	originURL := ""
+	if len(origin) > 0 {
+		originURL = origin[0]
+	}
+
 	return &Repo{
-		Repository: *repo, Origin: origin[0], Remotes: remotes,
+		Repository: *repo, Origin: originURL, Remotes: remotes,
 		HeadBranchName: headBranch, Branches: branches, Status: status,
 	}, nil
 }

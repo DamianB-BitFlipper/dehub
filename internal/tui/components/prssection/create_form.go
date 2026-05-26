@@ -15,6 +15,7 @@ import (
 
 type createPRForm struct {
 	ctx      *context.ProgramContext
+	mode     createPRFormMode
 	title    textinput.Model
 	head     textinput.Model
 	base     textinput.Model
@@ -29,6 +30,13 @@ type createPRForm struct {
 	active   int
 	width    int
 }
+
+type createPRFormMode int
+
+const (
+	createPRFormModeCreate createPRFormMode = iota
+	createPRFormModeEdit
+)
 
 func newCreatePRForm(ctx *context.ProgramContext) createPRForm {
 	title := newCreatePRTextInput(ctx, "PR title")
@@ -62,7 +70,7 @@ func newCreatePRForm(ctx *context.ProgramContext) createPRForm {
 		})
 	}
 
-	f := createPRForm{ctx: ctx, title: title, head: head, base: base, body: body}
+	f := createPRForm{ctx: ctx, mode: createPRFormModeCreate, title: title, head: head, base: base, body: body}
 	f.focusActive()
 	return f
 }
@@ -105,38 +113,38 @@ func (f createPRForm) Update(msg tea.Msg) (createPRForm, tea.Cmd) {
 		switch keyMsg.String() {
 		case "tab", "shift+tab":
 			if keyMsg.String() == "shift+tab" {
-				f.active = (f.active + 3) % 4
+				f.active = (f.active + f.fieldCount() - 1) % f.fieldCount()
 			} else {
-				f.active = (f.active + 1) % 4
+				f.active = (f.active + 1) % f.fieldCount()
 			}
 			return f, f.focusActive()
 		case "down", "ctrl+n":
-			if f.active == 1 {
+			if f.isHeadActive() {
 				f.headIdx = nextBranchIndex(f.headIdx, len(f.headList))
 				return f, nil
 			}
-			if f.active == 2 {
+			if f.isBaseActive() {
 				f.baseIdx = nextBranchIndex(f.baseIdx, len(f.baseList))
 				return f, nil
 			}
 		case "up", "ctrl+p":
-			if f.active == 1 {
+			if f.isHeadActive() {
 				f.headIdx = prevBranchIndex(f.headIdx, len(f.headList))
 				return f, nil
 			}
-			if f.active == 2 {
+			if f.isBaseActive() {
 				f.baseIdx = prevBranchIndex(f.baseIdx, len(f.baseList))
 				return f, nil
 			}
 		case "enter", "ctrl+y":
-			if f.active == 1 {
+			if f.isHeadActive() {
 				if selected := selectedBranch(f.headList, f.headIdx); selected != "" {
 					f.head.SetValue(selected)
 					f.head.CursorEnd()
 					return f, nil
 				}
 			}
-			if f.active == 2 {
+			if f.isBaseActive() {
 				if selected := selectedBranch(f.baseList, f.baseIdx); selected != "" {
 					f.base.SetValue(selected)
 					f.base.CursorEnd()
@@ -150,11 +158,11 @@ func (f createPRForm) Update(msg tea.Msg) (createPRForm, tea.Cmd) {
 	switch f.active {
 	case 0:
 		f.title, cmd = f.title.Update(msg)
-	case 1:
+	case f.headFieldIndex():
 		f.head, cmd = f.head.Update(msg)
 		f.headList = filterBranches(f.branches, f.head.Value())
 		f.headIdx = clampBranchIndex(f.headIdx, len(f.headList))
-	case 2:
+	case f.baseFieldIndex():
 		f.base, cmd = f.base.Update(msg)
 		f.baseList = filterBranches(f.branches, f.base.Value())
 		f.baseIdx = clampBranchIndex(f.baseIdx, len(f.baseList))
@@ -172,12 +180,12 @@ func (f *createPRForm) focusActive() tea.Cmd {
 	switch f.active {
 	case 0:
 		return f.title.Focus()
-	case 1:
+	case f.headFieldIndex():
 		cmd := f.head.Focus()
 		f.headList = filterBranches(f.branches, f.head.Value())
 		f.headIdx = clampBranchIndex(f.headIdx, len(f.headList))
 		return cmd
-	case 2:
+	case f.baseFieldIndex():
 		cmd := f.base.Focus()
 		f.baseList = filterBranches(f.branches, f.base.Value())
 		f.baseIdx = clampBranchIndex(f.baseIdx, len(f.baseList))
@@ -205,9 +213,9 @@ func (f createPRForm) View() string {
 
 	headBranchList := ""
 	baseBranchList := ""
-	if f.active == 1 {
+	if f.isHeadActive() {
 		headBranchList = f.branchListView(f.headList, f.headIdx, width)
-	} else if f.active == 2 {
+	} else if f.isBaseActive() {
 		baseBranchList = f.branchListView(f.baseList, f.baseIdx, width)
 	}
 
@@ -216,25 +224,67 @@ func (f createPRForm) View() string {
 		helpStyle = helpStyle.Foreground(f.ctx.Theme.FaintText)
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
+	parts := []string{
 		f.renderField(width, label(f.active == 0, "Title")),
 		f.renderField(width, f.title.View()),
 		f.renderField(width, ""),
-		f.renderField(width, label(f.active == 1, "Head branch")),
-		f.renderField(width, f.head.View()),
-		f.renderField(width, headBranchList),
-		f.renderField(width, ""),
-		f.renderField(width, label(f.active == 2, "Base branch")),
+	}
+	if f.mode == createPRFormModeCreate {
+		parts = append(parts,
+			f.renderField(width, label(f.isHeadActive(), "Head branch")),
+			f.renderField(width, f.head.View()),
+			f.renderField(width, headBranchList),
+			f.renderField(width, ""),
+		)
+	}
+	parts = append(parts,
+		f.renderField(width, label(f.isBaseActive(), "Base branch")),
 		f.renderField(width, f.base.View()),
 		f.renderField(width, baseBranchList),
 		f.renderField(width, ""),
-		f.renderField(width, label(f.active == 3, "Body")),
+		f.renderField(width, label(f.isBodyActive(), "Body")),
 		f.renderField(width, f.body.View()),
 		f.renderField(width, ""),
 		f.renderField(width, helpStyle.Render("tab switch field · ↑/↓ choose branch · enter select · ctrl+d submit · esc cancel")),
 	)
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		parts...,
+	)
 }
+
+func (f createPRForm) fieldCount() int {
+	if f.mode == createPRFormModeEdit {
+		return 3
+	}
+	return 4
+}
+
+func (f createPRForm) headFieldIndex() int {
+	if f.mode == createPRFormModeEdit {
+		return -1
+	}
+	return 1
+}
+
+func (f createPRForm) baseFieldIndex() int {
+	if f.mode == createPRFormModeEdit {
+		return 1
+	}
+	return 2
+}
+
+func (f createPRForm) bodyFieldIndex() int {
+	if f.mode == createPRFormModeEdit {
+		return 2
+	}
+	return 3
+}
+
+func (f createPRForm) isHeadActive() bool { return f.active == f.headFieldIndex() }
+func (f createPRForm) isBaseActive() bool { return f.active == f.baseFieldIndex() }
+func (f createPRForm) isBodyActive() bool { return f.active == f.bodyFieldIndex() }
 
 func (f createPRForm) branchListView(branches []fuzzyselect.Suggestion, selected int, width int) string {
 	if f.ctx == nil {
@@ -296,6 +346,32 @@ func (f *createPRForm) SetBranches(branches []fuzzyselect.Suggestion, head strin
 	f.baseList = filterBranches(f.branches, f.base.Value())
 	f.headIdx = 0
 	f.baseIdx = 0
+}
+
+func (f *createPRForm) SetBranchSuggestions(branches []fuzzyselect.Suggestion) {
+	f.loading = false
+	f.err = nil
+	f.branches = branches
+	f.headList = filterBranches(f.branches, f.head.Value())
+	f.baseList = filterBranches(f.branches, f.base.Value())
+	f.headIdx = 0
+	f.baseIdx = 0
+}
+
+func (f *createPRForm) SetEditPR(title string, body string, head string, base string) {
+	f.mode = createPRFormModeEdit
+	f.title.SetValue(title)
+	f.body.SetValue(body)
+	f.head.SetValue(head)
+	f.base.SetValue(base)
+	f.title.CursorEnd()
+	f.base.CursorEnd()
+	f.active = 0
+	f.focusActive()
+}
+
+func (f *createPRForm) SetCreateMode() {
+	f.mode = createPRFormModeCreate
 }
 
 func (f *createPRForm) SetBranchesLoading() {
@@ -383,6 +459,7 @@ func (f createPRForm) Base() string {
 }
 
 func (f *createPRForm) Reset() {
+	f.mode = createPRFormModeCreate
 	f.title.Reset()
 	f.head.Reset()
 	f.base.Reset()

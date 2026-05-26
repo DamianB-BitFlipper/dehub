@@ -10,9 +10,9 @@ import (
 	"charm.land/log/v2"
 	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
-	checks "github.com/dlvhdr/x/gh-checks"
 	"github.com/shurcooL/githubv4"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/checks"
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )

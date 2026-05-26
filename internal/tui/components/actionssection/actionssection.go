@@ -12,9 +12,11 @@ import (
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/actionrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/table"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tasks"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
@@ -23,25 +25,53 @@ import (
 
 const SectionType = "action"
 
+// Pane identifies one of the three columns in the Actions three-pane layout.
+// It governs which pane consumes navigation keystrokes (Up/Down/PgUp/PgDn/g/G).
+type Pane int
+
+const (
+	PaneWorkflows Pane = iota
+	PaneRuns
+	PaneDetails
+)
+
 type Model struct {
 	section.BaseModel
-	Runs []data.WorkflowRun
+	RepoName         string
+	Workflows        []data.Workflow
+	Runs             []data.WorkflowRun
+	RunsTable        table.Model
+	selectedWorkflow *data.Workflow
+	runsTaskId       string
+	focusedPane      Pane
 }
 
 func NewModel(id int, ctx *context.ProgramContext, cfg config.ActionsSectionConfig, lastUpdated, createdAt time.Time) Model {
-	m := Model{}
+	m := Model{RepoName: data.ActionsRepoFromFilters(cfg.Filters)}
 	m.BaseModel = section.NewModel(ctx, section.NewSectionOptions{
 		Id:          id,
 		Config:      cfg.ToSectionConfig(),
 		Type:        SectionType,
-		Columns:     GetSectionColumns(cfg, ctx),
+		Columns:     GetWorkflowColumns(ctx),
 		Singular:    m.GetItemSingularForm(),
 		Plural:      m.GetItemPluralForm(),
 		LastUpdated: lastUpdated,
 		CreatedAt:   createdAt,
 	})
+	m.Workflows = []data.Workflow{}
 	m.Runs = []data.WorkflowRun{}
-	m.updateSortHeader()
+	m.RunsTable = table.NewModel(
+		*ctx,
+		m.GetRunTableDimensions(),
+		lastUpdated,
+		createdAt,
+		GetRunColumns(cfg, ctx),
+		nil,
+		"Run",
+		utils.StringPtr(m.Ctx.Styles.Section.EmptyStateStyle.Render("No runs were found for this workflow")),
+		"Loading...",
+		false,
+	)
 	return m
 }
 
@@ -66,7 +96,15 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			}
 			break
 		}
-		if key.Matches(msg, keys.ActionsKeys.ToggleSmartFiltering) {
+
+		switch {
+		case msg.String() == ".":
+			m.NextRun()
+			return m, nil
+		case msg.String() == ",":
+			m.PrevRun()
+			return m, nil
+		case key.Matches(msg, keys.ActionsKeys.ToggleSmartFiltering):
 			if m.HasCurrentRepoNameInConfiguredFilter() || !m.HasRepoNameInConfiguredFilter() {
 				m.IsFilteredByCurrentRemote = !m.IsFilteredByCurrentRemote
 			}
@@ -78,77 +116,150 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				m.ResetRows()
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
 			}
-		} else if key.Matches(msg, keys.ActionsKeys.SortOrder) {
+		case key.Matches(msg, keys.ActionsKeys.SortOrder):
 			m.ToggleSortOrder()
 			m.updateSortHeader()
 			m.sortRuns()
-			m.Table.SetRows(m.BuildRows())
+			m.RunsTable.SetRows(m.BuildRunRows())
 			return m, nil
+		case key.Matches(msg, keys.ActionsKeys.Rerun):
+			if run := m.SelectedRun(); run != nil {
+				return m, tasks.RerunWorkflowRun(m.Ctx, m.taskSection(), run)
+			}
+		case key.Matches(msg, keys.ActionsKeys.RerunFailed):
+			if run := m.SelectedRun(); run != nil {
+				return m, tasks.RerunFailedJobs(m.Ctx, m.taskSection(), run)
+			}
+		case key.Matches(msg, keys.ActionsKeys.Cancel):
+			if run := m.SelectedRun(); run != nil {
+				return m, tasks.CancelWorkflowRun(m.Ctx, m.taskSection(), run)
+			}
 		}
 
-	case SectionActionsFetchedMsg:
+	case SectionWorkflowsFetchedMsg:
 		if m.LastFetchTaskId == msg.TaskId {
-			m.Runs = msg.Runs
-			m.sortRuns()
+			m.Workflows = msg.Workflows
 			m.TotalCount = msg.TotalCount
 			m.SetIsLoading(false)
-			m.PageInfo = &msg.PageInfo
 			m.Table.SetRows(m.BuildRows())
+			cmd = tea.Batch(m.SyncSelectedWorkflow()...)
 			m.UpdateLastUpdated(time.Now())
 			m.UpdateTotalItemsCount(m.TotalCount)
 		}
+	case SectionActionsFetchedMsg:
+		if m.runsTaskId == msg.TaskId {
+			m.Runs = msg.Runs
+			m.sortRuns()
+			m.RunsTable.SetIsLoading(false)
+			m.RunsTable.ResetCurrItem()
+			m.RunsTable.SetRows(m.BuildRunRows())
+			m.UpdateLastUpdated(time.Now())
+		}
+	case tasks.UpdateActionMsg:
+		m.applyActionUpdate(msg)
 	}
 
 	search, searchCmd := m.SearchBar.Update(msg)
 	m.SearchBar = search
 	table, tableCmd := m.Table.Update(msg)
 	m.Table = table
-	return m, tea.Batch(cmd, searchCmd, tableCmd)
+	runsTable, runsTableCmd := m.RunsTable.Update(msg)
+	m.RunsTable = runsTable
+	return m, tea.Batch(cmd, searchCmd, tableCmd, runsTableCmd)
 }
 
-func GetSectionColumns(cfg config.ActionsSectionConfig, ctx *context.ProgramContext) []table.Column {
-	dLayout := ctx.Config.Defaults.Layout.Actions
-	sLayout := cfg.Layout
-	statusLayout := config.MergeColumnConfigs(dLayout.Status, sLayout.Status)
-	repoLayout := config.MergeColumnConfigs(dLayout.Repo, sLayout.Repo)
-	workflowLayout := config.MergeColumnConfigs(dLayout.Workflow, sLayout.Workflow)
-	branchLayout := config.MergeColumnConfigs(dLayout.Branch, sLayout.Branch)
-	eventLayout := config.MergeColumnConfigs(dLayout.Event, sLayout.Event)
-	actorLayout := config.MergeColumnConfigs(dLayout.Actor, sLayout.Actor)
-	titleLayout := config.MergeColumnConfigs(dLayout.Title, sLayout.Title)
-	updatedAtLayout := config.MergeColumnConfigs(dLayout.UpdatedAt, sLayout.UpdatedAt)
-	createdAtLayout := config.MergeColumnConfigs(dLayout.CreatedAt, sLayout.CreatedAt)
+func GetWorkflowColumns(ctx *context.ProgramContext) []table.Column {
 	return []table.Column{
-		{Title: "", Width: statusLayout.Width, Hidden: statusLayout.Hidden},
-		{Title: "", Width: repoLayout.Width, Hidden: repoLayout.Hidden},
-		{Title: "Workflow", Width: workflowLayout.Width, Hidden: workflowLayout.Hidden},
-		{Title: "Title", Grow: utils.BoolPtr(true), Hidden: titleLayout.Hidden},
-		{Title: "Branch", Width: branchLayout.Width, Hidden: branchLayout.Hidden},
-		{Title: "Event", Width: eventLayout.Width, Hidden: eventLayout.Hidden},
-		{Title: "Actor", Width: actorLayout.Width, Hidden: actorLayout.Hidden},
-		{Title: "󱦻", Width: updatedAtLayout.Width, Hidden: updatedAtLayout.Hidden},
-		{Title: "󱡢", Width: createdAtLayout.Width, Hidden: createdAtLayout.Hidden},
+		{Title: "State", Width: utils.IntPtr(8)},
+		{Title: "Workflow", Grow: utils.BoolPtr(true)},
+		{Title: "󱦻", Width: utils.IntPtr(5)},
+	}
+}
+
+func GetRunColumns(cfg config.ActionsSectionConfig, ctx *context.ProgramContext) []table.Column {
+	_ = cfg
+	_ = ctx
+	return []table.Column{
+		{Title: "", Width: utils.IntPtr(3)},
+		{Title: "Title", Grow: utils.BoolPtr(true)},
+		{Title: "󱦻", Width: utils.IntPtr(5)},
 	}
 }
 
 func (m Model) BuildRows() []table.Row {
-	rows := make([]table.Row, 0, len(m.filteredRuns()))
-	for _, run := range m.filteredRuns() {
-		rows = append(rows, actionrow.Build(run))
+	rows := make([]table.Row, 0, len(m.filteredWorkflows()))
+	for _, workflow := range m.filteredWorkflows() {
+		rows = append(rows, table.Row{
+			workflow.State,
+			workflow.Name,
+			utils.TimeElapsed(workflow.GetUpdatedAt()),
+		})
 	}
 	return rows
 }
 
-func (m *Model) NumRows() int { return len(m.filteredRuns()) }
+func (m Model) BuildRunRows() []table.Row {
+	rows := make([]table.Row, 0, len(m.filteredRuns()))
+	for _, run := range m.filteredRuns() {
+		rows = append(rows, table.Row{
+			actionrow.StatusIcon(run),
+			run.GetTitle(),
+			utils.TimeElapsed(run.UpdatedAt),
+		})
+	}
+	return rows
+}
+
+func (m *Model) NumRows() int {
+	return len(m.filteredWorkflows())
+}
 
 func (m *Model) GetCurrRow() data.RowData {
 	idx := m.Table.GetCurrItem()
-	runs := m.filteredRuns()
-	if idx < 0 || idx >= len(runs) {
+	workflows := m.filteredWorkflows()
+	if idx < 0 || idx >= len(workflows) {
 		return nil
 	}
-	run := runs[idx]
-	return &run
+	workflow := workflows[idx]
+	return &workflow
+}
+
+func (m Model) taskSection() tasks.SectionIdentifier {
+	return tasks.SectionIdentifier{Id: m.Id, Type: m.Type}
+}
+
+func (m *Model) applyActionUpdate(msg tasks.UpdateActionMsg) {
+	for i := range m.Runs {
+		if int(m.Runs[i].Id) != msg.RunID || m.Runs[i].Repository.FullName != msg.Repo {
+			continue
+		}
+		if msg.Status != nil {
+			m.Runs[i].Status = *msg.Status
+		}
+		if msg.Conclusion != nil {
+			m.Runs[i].Conclusion = *msg.Conclusion
+		}
+	}
+	m.sortRuns()
+	m.RunsTable.SetRows(m.BuildRunRows())
+}
+
+func (m Model) filteredWorkflows() []data.Workflow {
+	query := m.LocalSearchQuery()
+	if query == "" {
+		return m.Workflows
+	}
+	filtered := make([]data.Workflow, 0, len(m.Workflows))
+	for _, workflow := range m.Workflows {
+		fields := []string{strconv.FormatInt(workflow.Id, 10), workflow.Name, workflow.Path, workflow.State, workflow.RepoName}
+		for _, field := range fields {
+			if strings.Contains(strings.ToLower(field), query) {
+				filtered = append(filtered, workflow)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func (m Model) filteredRuns() []data.WorkflowRun {
@@ -178,20 +289,89 @@ func actionRunMatchesLocalSearch(run data.WorkflowRun, query string) bool {
 	return false
 }
 
+func (m *Model) SyncSelectedWorkflow() []tea.Cmd {
+	idx := m.Table.GetCurrItem()
+	workflows := m.filteredWorkflows()
+	if idx < 0 || idx >= len(workflows) {
+		m.selectedWorkflow = nil
+		m.Runs = nil
+		m.RunsTable.SetRows(nil)
+		return nil
+	}
+	// Copy by value so the stored pointer is independent of subsequent
+	// mutations to the (possibly re-sliced) Workflows slice.
+	workflow := workflows[idx]
+	if m.selectedWorkflow != nil && m.selectedWorkflow.Id == workflow.Id {
+		return nil
+	}
+	wfCopy := workflow
+	m.selectedWorkflow = &wfCopy
+	m.Runs = nil
+	m.PageInfo = nil
+	m.RunsTable.ResetCurrItem()
+	m.RunsTable.SetRows(nil)
+	m.RunsTable.SetIsLoading(true)
+	return m.fetchWorkflowRuns()
+}
+
 func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 	if m == nil || (m.PageInfo != nil && !m.PageInfo.HasNextPage) {
 		return nil
 	}
+	if m.RepoName == "" {
+		return nil
+	}
+	return m.fetchWorkflows()
+}
+
+func (m *Model) fetchWorkflows() []tea.Cmd {
+	taskId := fmt.Sprintf("fetching_action_workflows_%d_%d", m.Id, time.Now().UnixNano())
+	m.LastFetchTaskId = taskId
+	m.SetIsLoading(true)
+	startCmd := m.Ctx.StartTask(context.Task{
+		Id:           taskId,
+		StartText:    fmt.Sprintf(`Fetching workflows for "%s"`, m.Config.Title),
+		FinishedText: fmt.Sprintf(`Workflows for "%s" have been fetched`, m.Config.Title),
+		State:        context.TaskStart,
+	})
+	fetchCmd := func() tea.Msg {
+		res, err := data.FetchActionsWorkflows(m.Config.Filters)
+		if err != nil {
+			return constants.TaskFinishedMsg{SectionId: m.Id, SectionType: m.Type, TaskId: taskId, Err: err}
+		}
+		return constants.TaskFinishedMsg{
+			SectionId:   m.Id,
+			SectionType: m.Type,
+			TaskId:      taskId,
+			Msg: SectionWorkflowsFetchedMsg{
+				Workflows:  res.Workflows,
+				TotalCount: res.TotalCount,
+				TaskId:     taskId,
+			},
+		}
+	}
+	return []tea.Cmd{startCmd, fetchCmd}
+}
+
+func (m *Model) fetchWorkflowRuns() []tea.Cmd {
+	if m.selectedWorkflow == nil {
+		return nil
+	}
+	// Capture identifiers up front so the fetch closure doesn't race with
+	// later workflow switches mutating m.selectedWorkflow.
+	workflowID := m.selectedWorkflow.Id
+	workflowName := m.selectedWorkflow.Name
+	repoName := m.RepoName
 	startCursor := time.Now().String()
 	if m.PageInfo != nil {
 		startCursor = m.PageInfo.StartCursor
 	}
-	taskId := fmt.Sprintf("fetching_actions_%d_%s", m.Id, startCursor)
-	m.LastFetchTaskId = taskId
+	taskId := fmt.Sprintf("fetching_action_runs_%d_%d_%s", m.Id, workflowID, startCursor)
+	m.runsTaskId = taskId
 	startCmd := m.Ctx.StartTask(context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf(`Fetching actions for "%s"`, m.Config.Title),
-		FinishedText: fmt.Sprintf(`Actions for "%s" have been fetched`, m.Config.Title),
+		StartText:    fmt.Sprintf(`Fetching runs for "%s"`, workflowName),
+		FinishedText: fmt.Sprintf(`Runs for "%s" have been fetched`, workflowName),
 		State:        context.TaskStart,
 	})
 	fetchCmd := func() tea.Msg {
@@ -199,7 +379,7 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 		if limit == nil {
 			limit = &m.Ctx.Config.Defaults.ActionsLimit
 		}
-		res, err := data.FetchActionsWorkflowRuns(m.GetFilters(), *limit, m.PageInfo)
+		res, err := data.FetchActionsWorkflowRunsForWorkflow(repoName, workflowID, *limit)
 		if err != nil {
 			return constants.TaskFinishedMsg{SectionId: m.Id, SectionType: m.Type, TaskId: taskId, Err: err}
 		}
@@ -218,16 +398,61 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 	return []tea.Cmd{startCmd, fetchCmd}
 }
 
-func FetchAllSections(ctx *context.ProgramContext) ([]section.Section, tea.Cmd) {
-	sectionConfigs := ctx.Config.ActionsSections
+func FetchAllSections(
+	ctx *context.ProgramContext,
+	existing []section.Section,
+) ([]section.Section, tea.Cmd) {
+	sectionConfigs := actionSectionConfigs(ctx.Config.ActionsSections, ctx.Config.RepoPaths)
 	fetchCmds := make([]tea.Cmd, 0, len(sectionConfigs))
 	sections := make([]section.Section, 0, len(sectionConfigs))
 	for i, sectionConfig := range sectionConfigs {
-		sectionModel := NewModel(i+1, ctx, sectionConfig, time.Now(), time.Now())
+		sectionModel := NewModel(i, ctx, sectionConfig, time.Now(), time.Now())
+		// Preserve in-memory state from the previous section instance so that
+		// interval refreshes don't reset the user's selected workflow/run,
+		// local search, or sort order.
+		if i < len(existing) && existing[i] != nil {
+			if old, ok := existing[i].(*Model); ok {
+				sectionModel.Workflows = old.Workflows
+				sectionModel.Runs = old.Runs
+				sectionModel.RunsTable.SetRows(old.RunsTable.Rows)
+				sectionModel.selectedWorkflow = old.selectedWorkflow
+				sectionModel.TotalCount = old.TotalCount
+				sectionModel.LastFetchTaskId = old.LastFetchTaskId
+				sectionModel.runsTaskId = old.runsTaskId
+			}
+		}
 		sections = append(sections, &sectionModel)
 		fetchCmds = append(fetchCmds, sectionModel.FetchNextPageSectionRows()...)
 	}
 	return sections, tea.Batch(fetchCmds...)
+}
+
+func actionSectionConfigs(configs []config.ActionsSectionConfig, repoPaths map[string]string) []config.ActionsSectionConfig {
+	configured := make([]config.ActionsSectionConfig, 0, len(configs))
+	for _, cfg := range configs {
+		if data.ActionsRepoFromFilters(cfg.Filters) != "" {
+			configured = append(configured, cfg)
+		}
+	}
+	if len(configured) > 0 {
+		return configured
+	}
+
+	repos := common.ExpandRepoPaths(repoPaths)
+	configured = make([]config.ActionsSectionConfig, 0, len(repos))
+	for _, repo := range repos {
+		configured = append(configured, config.ActionsSectionConfig{
+			Title:   repo.Name,
+			Filters: "repo:" + repo.Name,
+		})
+	}
+	return configured
+}
+
+type SectionWorkflowsFetchedMsg struct {
+	Workflows  []data.Workflow
+	TotalCount int
+	TaskId     string
 }
 
 type SectionActionsFetchedMsg struct {
@@ -237,17 +462,31 @@ type SectionActionsFetchedMsg struct {
 	TaskId     string
 }
 
-func (m *Model) ResetRows() { m.Runs = nil; m.BaseModel.ResetRows() }
+func (m *Model) ResetRows() {
+	m.Workflows = nil
+	m.Runs = nil
+	m.selectedWorkflow = nil
+	m.RunsTable.SetRows(nil)
+	m.BaseModel.ResetRows()
+}
 
 func (m *Model) UpdateLastUpdated(t time.Time) { m.Table.UpdateLastUpdated(t) }
 
-func (m Model) GetItemSingularForm() string { return "Run" }
+func (m Model) GetItemSingularForm() string {
+	return "Workflow"
+}
 
-func (m Model) GetItemPluralForm() string { return "Runs" }
+func (m Model) GetItemPluralForm() string {
+	return "Workflows"
+}
 
 func (m Model) GetTotalCount() int { return m.TotalCount }
 
-func (m *Model) GetIsLoading() bool { return m.IsLoading }
+func (m *Model) GetIsLoading() bool {
+	// Reflect both the workflows fetch and the runs fetch so the tab
+	// spinner keeps spinning while either is in flight.
+	return m.IsLoading || m.RunsTable.IsLoading()
+}
 
 func (m *Model) SetIsLoading(val bool) { m.IsLoading = val; m.Table.SetIsLoading(val) }
 
@@ -255,13 +494,13 @@ func (m Model) GetPagerContent() string {
 	pagerContent := ""
 	if m.TotalCount > 0 {
 		pagerContent = fmt.Sprintf(
-			"%v %v • %v %v/%v • Fetched %v",
+			"%v %v • Workflow %v/%v • Runs %v/%v",
 			constants.WaitingIcon,
 			m.LastUpdated().Format("01/02 15:04:05"),
-			m.SingularForm,
 			m.Table.GetCurrItem()+1,
 			m.TotalCount,
-			len(m.Table.Rows),
+			m.RunsTable.GetCurrItem()+1,
+			max(1, len(m.RunsTable.Rows)),
 		)
 	}
 	return m.Ctx.Styles.ListViewPort.PagerStyle.Render(pagerContent)
@@ -278,5 +517,96 @@ func (m *Model) sortRuns() {
 }
 
 func (m *Model) updateSortHeader() {
-	m.SetColumnTitle(3, fmt.Sprintf("Title (%s)", m.SortOrderLabel()))
+	if len(m.RunsTable.Columns) > 1 {
+		m.RunsTable.Columns[1].Title = fmt.Sprintf("Title (%s)", m.SortOrderLabel())
+	}
+}
+
+func (m *Model) NextRow() int {
+	return m.BaseModel.NextRow()
+}
+
+func (m *Model) PrevRow() int {
+	return m.BaseModel.PrevRow()
+}
+
+func (m *Model) FirstItem() int {
+	return m.BaseModel.FirstItem()
+}
+
+func (m *Model) LastItem() int {
+	return m.BaseModel.LastItem()
+}
+
+func (m *Model) PageDown() int {
+	return m.BaseModel.PageDown()
+}
+
+func (m *Model) PageUp() int {
+	return m.BaseModel.PageUp()
+}
+
+func (m *Model) NextRun() int {
+	return m.RunsTable.NextItem()
+}
+
+func (m *Model) PrevRun() int {
+	return m.RunsTable.PrevItem()
+}
+
+// FocusedPane returns which of the three Actions panes currently consumes
+// navigation keys.
+func (m *Model) FocusedPane() Pane {
+	return m.focusedPane
+}
+
+// FocusNextPane cycles forward through the panes (Workflows -> Runs ->
+// Details -> Workflows).
+func (m *Model) FocusNextPane() {
+	m.focusedPane = (m.focusedPane + 1) % 3
+}
+
+// FocusPrevPane cycles backward through the panes.
+func (m *Model) FocusPrevPane() {
+	m.focusedPane = (m.focusedPane + 2) % 3
+}
+
+// SetFocusedPane sets the focused pane explicitly.
+func (m *Model) SetFocusedPane(p Pane) {
+	m.focusedPane = p
+}
+
+func (m *Model) SelectedRun() *data.WorkflowRun {
+	runs := m.filteredRuns()
+	idx := m.RunsTable.GetCurrItem()
+	if idx < 0 || idx >= len(runs) {
+		return nil
+	}
+	run := runs[idx]
+	return &run
+}
+
+func (m *Model) GetRunTableDimensions() constants.Dimensions {
+	d := m.GetDimensions()
+	return constants.Dimensions{Width: max(0, d.Width), Height: max(0, d.Height-2)}
+}
+
+func (m *Model) SetWorkflowTableDimensions(width, height int) {
+	m.Table.SetDimensions(constants.Dimensions{Width: max(0, width), Height: max(0, height)})
+	m.Table.SyncViewPortContent()
+}
+
+func (m *Model) SetRunTableDimensions(width, height int) {
+	m.RunsTable.SetDimensions(constants.Dimensions{Width: max(0, width), Height: max(0, height)})
+	m.RunsTable.SyncViewPortContent()
+}
+
+func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
+	m.BaseModel.UpdateProgramContext(ctx)
+	m.RunsTable.UpdateProgramContext(ctx)
+	m.RunsTable.SyncViewPortContent()
+}
+
+func (m Model) RunsView() string {
+	return m.RunsTable.View()
 }

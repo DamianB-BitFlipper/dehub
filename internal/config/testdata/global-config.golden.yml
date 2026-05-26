@@ -36,18 +36,7 @@ notificationsSections:
     filters: "reason:subscribed"
   - title: Team Mentioned
     filters: "reason:team-mention"
-actionsSections:
-  - title: All
-    filters: ""
-  - title: Failed
-    filters: status:failure
-  - title: In Progress
-    filters: status:in_progress
-  - title: My Runs
-    filters: actor:@me
-repo:
-  branchesRefetchIntervalSeconds: 30
-  prsRefetchIntervalSeconds: 60
+actionsSections: []
 defaults:
   preview:
     open: true
@@ -116,6 +105,7 @@ defaults:
         width: 5
         hidden: true
   refetchIntervalMinutes: 5
+  previewRefreshIntervalSeconds: 10
 keybindings:
   universal:
     - key: g
@@ -137,7 +127,7 @@ keybindings:
       name: code review
     - key: T
       command: |
-        tmux new-window -c /Users/dlvhdr/code/personal/gh-enhance ' task local-gh -- -R {{.RepoName}} {{.PrNumber}} '
+        gh pr checks --repo {{.RepoName}} {{.PrNumber}}
       builtin: ""
     - key: a
       command: |
@@ -153,7 +143,6 @@ keybindings:
     - key: a
       command: >-
         gh issue open --repo {{.RepoName}} {{.PrNumber}}
-  branches: []
   notifications: []
   actions: []
 repoPaths:

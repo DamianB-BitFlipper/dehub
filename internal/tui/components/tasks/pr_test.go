@@ -170,6 +170,29 @@ func TestMergePRTaskDefaultsToMergeMethod(t *testing.T) {
 	require.Equal(t, []string{"pr", "merge", "42", "-R", "owner/repo", "--merge"}, task.Args)
 }
 
+func TestEditPRTaskConfiguration(t *testing.T) {
+	section := SectionIdentifier{Id: 2, Type: "pr"}
+	pr := mockIssue{number: 42, repoName: "owner/repo"}
+
+	task := buildEditPRTask(section, pr, "New title", "New body", "develop")
+	msg := task.Msg(&exec.Cmd{}, nil).(UpdatePRMsg)
+
+	require.Equal(t, "pr_edit_42", task.Id)
+	require.Equal(t, []string{
+		"pr", "edit", "42", "-R", "owner/repo",
+		"--title", "New title",
+		"--body", "New body",
+		"--base", "develop",
+	}, task.Args)
+	require.Equal(t, section, task.Section)
+	require.Equal(t, "Editing PR #42", task.StartText)
+	require.Equal(t, "PR #42 has been edited", task.FinishedText)
+	require.Equal(t, 42, msg.PrNumber)
+	require.Equal(t, "New title", *msg.Title)
+	require.Equal(t, "New body", *msg.Body)
+	require.Equal(t, "develop", *msg.BaseRefName)
+}
+
 func TestApproveWorkflows_ReturnsNonNilCommand(t *testing.T) {
 	tests := []struct {
 		name     string

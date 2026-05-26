@@ -34,6 +34,9 @@ type UpdatePRMsg struct {
 	AddedReviewers   *data.ReviewRequests
 	RemovedReviewers *data.ReviewRequests
 	Labels           *data.PRLabels
+	Title            *string
+	Body             *string
+	BaseRefName      *string
 }
 
 type ReviewThreadReply struct {
@@ -346,6 +349,44 @@ func UpdatePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.Ro
 			}
 		},
 	})
+}
+
+func EditPR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData, title string, body string, base string) tea.Cmd {
+	return fireTask(ctx, buildEditPRTask(section, pr, title, body, base))
+}
+
+func buildEditPRTask(section SectionIdentifier, pr data.RowData, title string, body string, base string) GitHubTask {
+	prNumber := pr.GetNumber()
+	args := []string{
+		"pr",
+		"edit",
+		fmt.Sprint(prNumber),
+		"-R",
+		pr.GetRepoNameWithOwner(),
+		"--title",
+		title,
+		"--body",
+		body,
+	}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+
+	return GitHubTask{
+		Id:           buildTaskId("pr_edit", prNumber),
+		Args:         args,
+		Section:      section,
+		StartText:    fmt.Sprintf("Editing PR #%d", prNumber),
+		FinishedText: fmt.Sprintf("PR #%d has been edited", prNumber),
+		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			return UpdatePRMsg{
+				PrNumber:    prNumber,
+				Title:       utils.StringPtr(title),
+				Body:        utils.StringPtr(body),
+				BaseRefName: utils.StringPtr(base),
+			}
+		},
+	}
 }
 
 func AssignPR(

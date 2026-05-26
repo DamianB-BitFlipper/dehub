@@ -16,6 +16,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prompt"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tasks"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
@@ -96,6 +97,27 @@ func TestCreatePRFormTabsThroughFieldsInVisualOrder(t *testing.T) {
 	require.Equal(t, 2, f.active)
 }
 
+func TestEditPRFormHidesHeadBranchAndTabsThroughEditableFields(t *testing.T) {
+	f := newTestModel("edit_pr").CreatePRForm
+	f.SetWidth(80)
+	f.SetEditPR("My PR", "body", "feature", "main")
+	f.SetBranchSuggestions([]fuzzyselect.Suggestion{{Value: "main"}, {Value: "develop"}})
+
+	view := ansi.Strip(f.View())
+	require.NotContains(t, view, "Head branch")
+	require.Contains(t, view, "Base branch")
+	require.Contains(t, view, "My PR")
+
+	f, _ = f.Update(tea.KeyPressMsg{Text: "tab"})
+	require.Equal(t, 1, f.active)
+
+	f, _ = f.Update(tea.KeyPressMsg{Text: "tab"})
+	require.Equal(t, 2, f.active)
+
+	f, _ = f.Update(tea.KeyPressMsg{Text: "tab"})
+	require.Equal(t, 0, f.active)
+}
+
 func TestCreatePRFormLongBranchesDoNotOverflowNarrowWidth(t *testing.T) {
 	f := newTestModel("create_pr").CreatePRForm
 	f.SetWidth(80)
@@ -171,7 +193,7 @@ func TestMergeRefreshedPRsInvalidatesStaleEnrichedState(t *testing.T) {
 	m := Model{
 		Prs: []prrow.Data{
 			{
-				Primary: &data.PullRequestData{Number: 1, Url: url, State: "OPEN"},
+				Primary:    &data.PullRequestData{Number: 1, Url: url, State: "OPEN"},
 				IsEnriched: true,
 				Enriched: data.EnrichedPullRequestData{
 					Number: 1,
@@ -196,7 +218,7 @@ func TestMergeRefreshedPRsInvalidatesStaleEnrichedReviewDecision(t *testing.T) {
 	m := Model{
 		Prs: []prrow.Data{
 			{
-				Primary: &data.PullRequestData{Number: 1, Url: url, ReviewDecision: "REVIEW_REQUIRED"},
+				Primary:    &data.PullRequestData{Number: 1, Url: url, ReviewDecision: "REVIEW_REQUIRED"},
 				IsEnriched: true,
 				Enriched: data.EnrichedPullRequestData{
 					Number:         1,
@@ -350,6 +372,35 @@ func TestPrepareCreatePRFormUsesCachedBranchesAndRequestsRefresh(t *testing.T) {
 	require.Equal(t, RefreshRepoBranchesMsg{SectionId: m.Id, RepoName: "owner/name"}, cmd())
 }
 
+func TestPrepareEditPRFormPrefillsCurrentPR(t *testing.T) {
+	m := newTestModel("")
+	m.Ctx.Config = &config.Config{}
+	pr := data.PullRequestData{
+		Number:      42,
+		Title:       "Old title",
+		Body:        "Old body",
+		HeadRefName: "feature",
+		BaseRefName: "main",
+	}
+	pr.Repository.NameWithOwner = "owner/name"
+	m.Prs = []prrow.Data{{Primary: &pr}}
+
+	cmd, err := m.PrepareEditPRForm(&m.Prs[0], &RepoBranches{
+		RepoName: "owner/name",
+		Branches: []fuzzyselect.Suggestion{{Value: "main"}, {Value: "develop"}},
+		Head:     "ignored-local-head",
+		Base:     "ignored-default-base",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, cmd)
+	require.Equal(t, "Old title", m.CreatePRForm.Title())
+	require.Equal(t, "Old body", m.CreatePRForm.Body())
+	require.Equal(t, "feature", m.CreatePRForm.Head())
+	require.Equal(t, "main", m.CreatePRForm.Base())
+	require.Equal(t, RefreshRepoBranchesMsg{SectionId: m.Id, RepoName: "owner/name"}, cmd())
+}
+
 func TestCreatePRRunsGhCreateWithoutWeb(t *testing.T) {
 	orig := runCreatePRRepoCommand
 	defer func() { runCreatePRRepoCommand = orig }()
@@ -443,6 +494,24 @@ func TestUpsertCreatedPRDedupesExistingPR(t *testing.T) {
 
 	require.Len(t, m.Prs, 1)
 	require.Equal(t, "new", m.Prs[0].Primary.Title)
+}
+
+func TestUpdatePRMsgAppliesEditedFields(t *testing.T) {
+	m := newTestModel("")
+	pr := data.PullRequestData{Number: 42, Title: "old", Body: "old body", BaseRefName: "main"}
+	m.Prs = []prrow.Data{{Primary: &pr, Enriched: data.EnrichedPullRequestData{Number: 42, Title: "old", Body: "old body", BaseRefName: "main"}, IsEnriched: true}}
+	title := "new"
+	body := "new body"
+	base := "develop"
+
+	require.True(t, m.applyUpdatePRMsg(tasks.UpdatePRMsg{PrNumber: 42, Title: &title, Body: &body, BaseRefName: &base}))
+
+	require.Equal(t, "new", m.Prs[0].Primary.Title)
+	require.Equal(t, "new body", m.Prs[0].Primary.Body)
+	require.Equal(t, "develop", m.Prs[0].Primary.BaseRefName)
+	require.Equal(t, "new", m.Prs[0].Enriched.Title)
+	require.Equal(t, "new body", m.Prs[0].Enriched.Body)
+	require.Equal(t, "develop", m.Prs[0].Enriched.BaseRefName)
 }
 
 func TestConfirmation_AcceptWithEmptyInput(t *testing.T) {

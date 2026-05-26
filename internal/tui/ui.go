@@ -25,8 +25,6 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/actionssection"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/actionview"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/branch"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/branchsidebar"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/footer"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/fuzzyselect"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issuessection"
@@ -37,7 +35,6 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prssection"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prview"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/reposection"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/sidebar"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tabs"
@@ -61,13 +58,11 @@ type Model struct {
 	sidebar           sidebar.Model
 	prView            prview.Model
 	issueSidebar      issueview.Model
-	branchSidebar     branchsidebar.Model
 	notificationView  notificationview.Model
 	actionRunView     *actionview.Model
 	actionRunViewKey  string
 	currSectionId     int
 	footer            footer.Model
-	repo              section.Section
 	prs               []section.Section
 	issues            []section.Section
 	notifications     []section.Section
@@ -83,7 +78,6 @@ type Model struct {
 	visibleRefreshes  map[string]int
 	visibleRefreshGen int
 	repoBranches      map[string]repoBranchesState
-	prWatchURL        string // kept for older tests; visibleRefreshes owns scheduling
 	positionOverride  string // "" means no override, "right" or "bottom"
 	activePane        activePane
 }
@@ -132,7 +126,6 @@ func NewModel(location config.Location) Model {
 	m.footer = footer.NewModel(m.ctx)
 	m.prView = prview.NewModel(m.ctx)
 	m.issueSidebar = issueview.NewModel(m.ctx)
-	m.branchSidebar = branchsidebar.NewModel(m.ctx)
 	m.notificationView = notificationview.NewModel(m.ctx)
 	m.tabs = tabs.NewModel(m.ctx)
 
@@ -172,21 +165,10 @@ func (m *Model) initScreen() tea.Msg {
 		return initMsg{Config: cfg}
 	}
 
-	var url string
-	if config.IsFeatureEnabled(config.FF_REPO_VIEW) && m.ctx.RepoPath != "" {
-		res, err := git.GetOriginUrl(m.ctx.RepoPath)
-		if err != nil {
-			showError(err)
-			return initMsg{Config: cfg}
-		}
-		url = res
-	}
-
 	err = keys.Rebind(
 		cfg.Keybindings.Universal,
 		cfg.Keybindings.Issues,
 		cfg.Keybindings.Prs,
-		cfg.Keybindings.Branches,
 		cfg.Keybindings.Notifications,
 	)
 	if err != nil {
@@ -203,7 +185,7 @@ func (m *Model) initScreen() tea.Msg {
 		showError(err)
 	}
 
-	return initMsg{Config: cfg, RepoUrl: url}
+	return initMsg{Config: cfg}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -222,6 +204,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		currSection     = m.getCurrSection()
 		currRowData     = m.getCurrRowData()
 	)
+	if m.shouldUpdateActionRunView(msg) {
+		view, actionCmd := m.actionRunView.UpdateEmbedded(msg)
+		m.actionRunView = &view
+		return m, actionCmd
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -311,7 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.isPreviewFocused() && m.isPreviewTabKey(msg):
 			m.prView, prViewCmd = m.prView.Update(msg)
 			m.syncSidebar()
-			cmds = append(cmds, prViewCmd, m.maybeSchedulePRWatch())
+			cmds = append(cmds, prViewCmd, m.reconcileVisibleRefreshes())
 			return m, tea.Batch(cmds...)
 
 		case m.isPageDownKey(msg):
@@ -328,8 +315,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
-				if prevRow != nextRow && nextRow == currSection.NumRows()-1 &&
-					m.ctx.View != config.RepoView {
+				if prevRow != nextRow && nextRow == currSection.NumRows()-1 {
 					cmds = append(cmds, currSection.FetchNextPageSectionRows()...)
 				}
 				cmd = m.onViewedRowChanged()
@@ -384,8 +370,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if currSection != nil {
 				prevRow := currSection.CurrRow()
 				nextRow := currSection.NextRow()
-				if prevRow != nextRow && nextRow == currSection.NumRows()-1 &&
-					m.ctx.View != config.RepoView {
+				if prevRow != nextRow && nextRow == currSection.NumRows()-1 {
 					cmds = append(cmds, currSection.FetchNextPageSectionRows()...)
 				}
 				cmd = m.onViewedRowChanged()
@@ -489,35 +474,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.footer.SetShowConfirmQuit(true)
 
-		case m.ctx.View == config.RepoView:
-			switch {
-			case key.Matches(msg, m.keys.OpenGithub):
-				cmds = append(cmds, m.repo.(*reposection.Model).OpenGithub())
-
-			case key.Matches(msg, keys.BranchKeys.Delete):
-				if currSection != nil {
-					currSection.SetPromptConfirmationAction("delete")
-					cmd = currSection.SetIsPromptConfirmationShown(true)
-				}
-				return m, cmd
-
-			case key.Matches(msg, keys.BranchKeys.New):
-				if currSection != nil {
-					currSection.SetPromptConfirmationAction("new")
-					cmd = currSection.SetIsPromptConfirmationShown(true)
-				}
-				return m, cmd
-
-			case key.Matches(msg, keys.BranchKeys.CreatePr):
-				if currSection != nil {
-					currSection.SetPromptConfirmationAction("create_pr")
-					cmd = currSection.SetIsPromptConfirmationShown(true)
-				}
-				return m, cmd
-
-			case key.Matches(msg, keys.BranchKeys.ViewPRs):
-				cmds = append(cmds, m.switchSelectedView())
-			}
 		case m.ctx.View == config.PRsView:
 			switch {
 			case key.Matches(msg, keys.PRKeys.Create):
@@ -550,7 +506,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.prView.IsActivityTab() {
 					m.scrollActivityToSavedOffsetOrBottom()
 				}
-				scmds = append(scmds, m.maybeSchedulePRWatch())
+				scmds = append(scmds, m.reconcileVisibleRefreshes())
 				return m, tea.Batch(scmds...)
 
 			case key.Matches(msg, m.keys.OpenGithub):
@@ -646,10 +602,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case key.Matches(msg, keys.PRKeys.Update):
-				if currRowData != nil {
-					cmd = m.promptConfirmation(currSection, "update")
+				prSection, ok := currSection.(*prssection.Model)
+				if !ok || prSection == nil {
+					return m, nil
 				}
-				return m, cmd
+				pr, ok := currRowData.(*prrow.Data)
+				if !ok || pr == nil || pr.Primary == nil {
+					return m, m.notifyErr("Current selection isn't associated with a PR")
+				}
+				cmd, editErr := prSection.PrepareEditPRForm(pr, m.cachedRepoBranches(pr.Primary.Repository.NameWithOwner))
+				if editErr != nil {
+					m.ctx.Error = editErr
+					return m, nil
+				}
+				prSection.SetPromptConfirmationAction("edit_pr")
+				blinkCmd := prSection.SetIsPromptConfirmationShown(true)
+				return m, tea.Batch(cmd, blinkCmd)
 
 			case key.Matches(msg, keys.PRKeys.ApproveWorkflows):
 				if currRowData != nil {
@@ -710,9 +678,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.switchSelectedView())
 			}
 		case m.ctx.View == config.ActionsView:
+			// Route navigation keys to the focused pane before the universal
+			// Up/Down/PgUp/PgDn handlers (which assume single-table sections).
+			if handled, navCmd := m.handleActionsNavigation(msg, currSection); handled {
+				return m, navCmd
+			}
+			// When the details pane has focus, forward actionview-local
+			// keys (pane switching, log search, zoom) directly to the
+			// embedded view.
+			if as, ok := currSection.(*actionssection.Model); ok && as != nil &&
+				as.FocusedPane() == actionssection.PaneDetails &&
+				m.actionRunView != nil &&
+				isActionsDetailsLocalKey(msg) {
+				view, actionCmd := m.actionRunView.Update(msg)
+				m.actionRunView = &view
+				return m, actionCmd
+			}
 			switch {
 			case key.Matches(msg, m.keys.OpenGithub):
 				cmds = append(cmds, m.openBrowser())
+			case key.Matches(msg, keys.ActionsKeys.FocusNextPane):
+				if as, ok := currSection.(*actionssection.Model); ok && as != nil {
+					as.FocusNextPane()
+					return m, m.onViewedRowChanged()
+				}
+			case key.Matches(msg, keys.ActionsKeys.FocusPrevPane):
+				if as, ok := currSection.(*actionssection.Model); ok && as != nil {
+					as.FocusPrevPane()
+					return m, m.onViewedRowChanged()
+				}
+			case key.Matches(msg, keys.ActionsKeys.Rerun),
+				key.Matches(msg, keys.ActionsKeys.RerunFailed),
+				key.Matches(msg, keys.ActionsKeys.Cancel),
+				key.Matches(msg, keys.ActionsKeys.SortOrder),
+				key.Matches(msg, keys.ActionsKeys.ToggleSmartFiltering):
+				if currSection != nil {
+					cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
+					return m, cmd
+				}
 			}
 		case m.ctx.View == config.NotificationsView:
 			switch {
@@ -855,7 +858,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var prCmd tea.Cmd
 				m.prView, prCmd = m.prView.Update(msg)
 				m.syncSidebar()
-				cmds = append(cmds, prCmd, m.maybeSchedulePRWatch())
+				cmds = append(cmds, prCmd, m.reconcileVisibleRefreshes())
 
 			// Issue keybindings when viewing an Issue notification
 			case m.notificationView.GetSubjectIssue() != nil:
@@ -938,13 +941,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Background(m.ctx.Theme.SelectedBackground)
 
 		m.ctx.View = m.ctx.Config.Defaults.View
+		m.tabs.SetHasSearchSection(viewHasSearchSection(m.ctx.View))
 		m.currSectionId = m.getCurrentViewDefaultSection()
 		m.sidebar.IsOpen = msg.Config.Defaults.Preview.Open
 		m.syncMainContentDimensions()
 
 		newSections, fetchSectionsCmds := m.fetchAllViewSections()
 		m.setCurrentViewSections(newSections)
-		m.tabs.SetCurrSectionId(1)
+		m.tabs.SetCurrSectionId(m.currSectionId)
 		cmds = append(cmds, fetchSectionsCmds, m.tabs.Init(), fetchUser,
 			m.doRefreshAtInterval(), m.doUpdateFooterAtInterval(), m.reconcileVisibleRefreshes())
 
@@ -981,6 +985,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if prMsg, ok := msg.Msg.(tasks.UpdatePRMsg); ok && msg.SectionType == notificationssection.SectionType {
 				if pr := m.notificationView.GetSubjectPR(); pr != nil && pr.GetNumber() == prMsg.PrNumber {
+					if prMsg.Title != nil {
+						pr.Primary.Title = *prMsg.Title
+						pr.Enriched.Title = *prMsg.Title
+					}
+					if prMsg.Body != nil {
+						pr.Primary.Body = *prMsg.Body
+						pr.Enriched.Body = *prMsg.Body
+					}
+					if prMsg.BaseRefName != nil {
+						pr.Primary.BaseRefName = *prMsg.BaseRefName
+						pr.Enriched.BaseRefName = *prMsg.BaseRefName
+					}
 					if prMsg.IsDraft != nil {
 						pr.Primary.IsDraft = *prMsg.IsDraft
 						pr.Enriched.IsDraft = *prMsg.IsDraft
@@ -1024,6 +1040,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			syncCmd := m.syncSidebar()
+			if m.ctx.View == config.ActionsView {
+				syncCmd = tea.Batch(syncCmd, m.syncActionsSelection())
+			}
 			cmds = append(cmds, syncCmd)
 		}
 
@@ -1039,15 +1058,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scrollActivityToSavedOffsetOrBottom()
 			}
 			cmds = append(cmds, m.prView.ActivateChecks())
-			cmds = append(cmds, m.maybeSchedulePRWatch())
+			cmds = append(cmds, m.reconcileVisibleRefreshes())
 		} else {
 			log.Error("failed enriching pr", "err", msg.Err)
 		}
 
 	case visibleRefreshTick:
 		if m.visibleRefreshes == nil || m.visibleRefreshes[msg.target.key] != msg.generation {
-			return m, nil
+			log.Debug("stale visible refresh tick", "key", msg.target.key, "generation", msg.generation)
+			return m, m.reconcileVisibleRefreshes()
 		}
+		log.Debug("visible refresh tick", "key", msg.target.key, "kind", msg.target.kind)
 		return m, m.fetchVisibleRefresh(msg.target)
 
 	case prssection.RefreshRepoBranchesMsg:
@@ -1064,10 +1085,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchVisibleRefresh(target)
 
-	case prWatchTick:
-		return m, fetchPRWatch(msg.url)
-
 	case visibleRefreshFetchedMsg:
+		log.Debug("visible refresh fetched", "key", msg.target.key, "kind", msg.target.kind, "err", msg.err)
 		if m.visibleRefreshes != nil {
 			delete(m.visibleRefreshes, msg.target.key)
 		}
@@ -1082,13 +1101,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.target.kind {
 		case visibleRefreshPRPreview:
-			if prMsg, ok := msg.data.(prWatchFetchedMsg); ok {
-				cmds = append(cmds, m.applyPRWatchFetched(prMsg))
+			if pr, ok := msg.data.(data.EnrichedPullRequestData); ok {
+				cmds = append(cmds, m.applyPRPreviewRefresh(msg.target.url, pr))
 			}
 		case visibleRefreshPRSection:
 			if sectionMsg, ok := msg.data.(prssection.SectionPullRequestsRefreshedMsg); ok {
 				cmds = append(cmds, m.updateSection(msg.target.sectionId, prssection.SectionType, sectionMsg))
 				cmds = append(cmds, m.syncSidebar())
+				cmds = append(cmds, m.fetchCurrentPRPreviewRefresh())
 			}
 		case visibleRefreshRepoBranches:
 			if branchMsg, ok := msg.data.(prssection.RepoBranches); ok {
@@ -1096,9 +1116,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		cmds = append(cmds, m.reconcileVisibleRefreshes())
-
-	case prWatchFetchedMsg:
-		cmds = append(cmds, m.applyPRWatchFetched(msg), m.maybeSchedulePRWatch())
 
 	case notificationPRFetchedMsg:
 		if msg.Err == nil {
@@ -1129,7 +1146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setPRSidebarContent()
 			}
 			m.markNotificationAsRead(msg.NotificationId)
-			cmds = append(cmds, m.maybeSchedulePRWatch())
+			cmds = append(cmds, m.reconcileVisibleRefreshes())
 		} else {
 			log.Error("failed fetching notification PR", "err", msg.Err)
 		}
@@ -1168,6 +1185,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.footer.SetRightSection(rTask)
 			cmd = internalTickCmd
 		}
+		// Fan out the tick to the embedded actionview so its internal
+		// spinners keep animating. spinner.TickMsg carries an ID; each
+		// spinner.Update only consumes ticks matching its own id, so this
+		// is safe to deliver to multiple sinks.
+		if m.actionRunView != nil {
+			view, actionCmd := m.actionRunView.UpdateEmbedded(msg)
+			m.actionRunView = &view
+			cmds = append(cmds, actionCmd)
+		}
 
 	case constants.ClearTaskMsg:
 		m.footer.SetRightSection("")
@@ -1181,6 +1207,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case execProcessFinishedMsg, tea.FocusMsg:
+		// Avoid refetching the entire Actions workflow list every time the
+		// terminal regains focus. actionssection has no meaningful
+		// PageInfo, so FetchNextPageSectionRows is a full refetch.
+		if _, isFocus := msg.(tea.FocusMsg); isFocus && m.ctx.View == config.ActionsView {
+			break
+		}
 		if currSection != nil {
 			cmds = append(cmds, currSection.FetchNextPageSectionRows()...)
 		}
@@ -1260,10 +1292,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	m.syncProgramContext()
 
-	var bsCmd tea.Cmd
-	m.branchSidebar, bsCmd = m.branchSidebar.Update(msg)
-	cmds = append(cmds, bsCmd)
-
 	m.sidebar, sidebarCmd = m.sidebar.Update(msg)
 
 	if m.prView.IsTextInputBoxFocused() {
@@ -1295,6 +1323,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.tabs = tm
 
 	sectionCmd := m.updateCurrentSection(msg)
+	if m.ctx.View == config.ActionsView && shouldSyncActionsSelection(msg) {
+		sectionCmd = tea.Batch(sectionCmd, m.syncActionsSelection())
+	}
 	cmds = append(
 		cmds,
 		cmd,
@@ -1326,37 +1357,39 @@ func (m Model) View() tea.View {
 		return v
 	}
 
-	s := strings.Builder{}
-	if m.ctx.View != config.RepoView {
-		s.WriteString(m.tabs.View())
-	}
-	s.WriteString("\n")
 	content := "No sections defined"
 	sidebarView := ""
 	currSection := m.getCurrSection()
 	if currSection != nil {
-		sectionView := m.renderCopySelectionContent(copySelectionPaneMain, currSection.View())
-		sidebarView = m.renderCopySelectionContent(copySelectionPanePreview, m.sidebar.View())
-		if m.ctx.PreviewPosition == "bottom" && m.sidebar.IsOpen {
-			content = lipgloss.JoinVertical(
-				lipgloss.Left,
-				sectionView,
-				sidebarView,
-			)
+		if actionsSection, ok := currSection.(*actionssection.Model); ok && m.ctx.View == config.ActionsView {
+			content = m.renderActionsThreePane(actionsSection)
 		} else {
-			content = lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				sectionView,
-				sidebarView,
-			)
+			sectionView := m.renderCopySelectionContent(copySelectionPaneMain, currSection.View())
+			sidebarView = m.renderCopySelectionContent(copySelectionPanePreview, m.sidebar.View())
+			if m.ctx.PreviewPosition == "bottom" && m.sidebar.IsOpen {
+				content = lipgloss.JoinVertical(
+					lipgloss.Left,
+					sectionView,
+					sidebarView,
+				)
+			} else {
+				content = lipgloss.JoinHorizontal(
+					lipgloss.Top,
+					sectionView,
+					sidebarView,
+				)
+			}
 		}
 	}
-	s.WriteString(content)
-	s.WriteString("\n")
-	s.WriteString(m.footer.View())
+	view := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.tabs.View(),
+		content,
+		m.footer.View(),
+	)
 
 	layers := []*lipgloss.Layer{
-		lipgloss.NewLayer(zone.Scan(s.String())),
+		lipgloss.NewLayer(zone.Scan(view)),
 	}
 	if logsSelectionLayer := m.renderCopySelectionPreviewLogsLayer(); logsSelectionLayer != nil {
 		layers = append(layers, logsSelectionLayer)
@@ -1402,6 +1435,129 @@ func (m Model) View() tea.View {
 	v.SetContent(comp.Render())
 
 	return v
+}
+
+func (m *Model) renderActionsThreePane(section *actionssection.Model) string {
+	width := max(0, m.ctx.ScreenWidth)
+	totalHeight := max(0, m.getBaseContentHeight())
+
+	// Render the section's search / local-search bar above the three panes
+	// when active, mirroring section.BaseModel.View().
+	searchBarView := ""
+	if section.IsLocalSearching || section.LocalSearchValue != "" {
+		searchBarView = section.LocalSearchBar.View(m.ctx)
+	} else if section.IsSearching || section.IsSearchFocused() {
+		searchBarView = section.SearchBar.View(m.ctx)
+	}
+	searchBarHeight := 0
+	if searchBarView != "" {
+		searchBarHeight = lipgloss.Height(searchBarView)
+	}
+
+	height := max(0, totalHeight-searchBarHeight)
+
+	// Distribute the leftover column more evenly so column widths only
+	// differ by at most one cell.
+	firstWidth := (width + 2) / 3
+	secondWidth := (width + 1) / 3
+	thirdWidth := max(0, width-firstWidth-secondWidth)
+
+	// The outer column header is 1 line. The inner Table.View() renders its
+	// own 2-line header (common.TableHeaderHeight). Reserve 3 lines so the
+	// last data row isn't clipped by the bounding Height set on colStyle.
+	const outerHeaderHeight = 1
+	const innerTableHeaderHeight = 2
+	const headerHeight = outerHeaderHeight + innerTableHeaderHeight
+	bodyHeight := max(0, height-headerHeight)
+
+	section.SetWorkflowTableDimensions(firstWidth, bodyHeight)
+	section.SetRunTableDimensions(secondWidth, bodyHeight)
+
+	header := func(text string, w int) string {
+		return lipgloss.NewStyle().
+			Width(w).
+			MaxWidth(w).
+			Bold(true).
+			Foreground(m.ctx.Theme.PrimaryText).
+			Padding(0, 1).
+			Render(text)
+	}
+	colStyle := func(w int) lipgloss.Style {
+		return lipgloss.NewStyle().
+			Width(w).
+			MaxWidth(w).
+			Height(height).
+			MaxHeight(height)
+	}
+
+	workflowTitle := "Workflows"
+	if section.GetIsLoading() {
+		workflowTitle = "Workflows…"
+	}
+	workflows := colStyle(firstWidth).Render(
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			header(workflowTitle, firstWidth),
+			section.Table.View(),
+		),
+	)
+
+	runsTitle := "Runs"
+	if section.RunsTable.IsLoading() {
+		runsTitle = "Runs…"
+	}
+	runs := colStyle(secondWidth).Render(
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			header(runsTitle, secondWidth),
+			section.RunsView(),
+		),
+	)
+
+	// The details pane only has the 1-line outer header (no inner table
+	// header), so its body can use more height than the workflow/runs panes.
+	details := m.renderActionsRunDetailsPane(section.SelectedRun(), thirdWidth, height, outerHeaderHeight)
+	panes := lipgloss.JoinHorizontal(lipgloss.Top, workflows, runs, details)
+	if searchBarView != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, searchBarView, panes)
+	}
+	return panes
+}
+
+func (m *Model) renderActionsRunDetailsPane(run *data.WorkflowRun, width, height, headerHeight int) string {
+	header := lipgloss.NewStyle().
+		Width(width).
+		MaxWidth(width).
+		Bold(true).
+		Foreground(m.ctx.Theme.PrimaryText).
+		Padding(0, 1).
+		Render("Details")
+
+	bodyHeight := max(0, height-headerHeight)
+	bodyStyle := lipgloss.NewStyle().
+		Width(width).
+		MaxWidth(width).
+		Height(bodyHeight).
+		MaxHeight(bodyHeight).
+		Padding(0, 1)
+
+	if run == nil {
+		body := bodyStyle.Align(lipgloss.Center).Render(
+			lipgloss.PlaceVertical(bodyHeight, lipgloss.Center, "No run selected"),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+
+	var content string
+	if m.actionRunView != nil {
+		contentWidth := max(0, width-2)
+		m.actionRunView.SetSize(contentWidth, bodyHeight)
+		content = m.actionRunView.EmbeddedView()
+	} else {
+		content = m.renderActionsRunPreview(run)
+	}
+	body := bodyStyle.Render(content)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
 func completionLayerY(previewTop int, previewView string, inputLineFromBottom int, completions string) int {
@@ -1499,6 +1655,9 @@ func (m *Model) markNotificationAsRead(notificationId string) {
 }
 
 func (m *Model) onViewedRowChanged() tea.Cmd {
+	if m.ctx.View == config.ActionsView {
+		return m.syncActionsSelection()
+	}
 	m.saveCurrentPRPreviewState()
 	m.prView.SetSummaryViewLess()
 	sidebarCmd := m.syncSidebar()
@@ -1509,7 +1668,97 @@ func (m *Model) onViewedRowChanged() tea.Cmd {
 	}
 	m.notificationView.ResetSubject()
 	keys.SetNotificationSubject(keys.NotificationSubjectNone)
-	return tea.Batch(sidebarCmd, enrichCmd, m.prView.ActivateChecks(), m.maybeSchedulePRWatch())
+	return tea.Batch(sidebarCmd, enrichCmd, m.prView.ActivateChecks(), m.reconcileVisibleRefreshes())
+}
+
+// handleActionsNavigation routes navigation keys (Up/Down/PgUp/PgDn/g/G) to
+// the currently-focused pane of the Actions three-pane layout. Returns
+// (handled, cmd) where handled=true short-circuits the universal navigation
+// handlers in the main Update loop.
+func (m *Model) handleActionsNavigation(msg tea.KeyMsg, currSection section.Section) (bool, tea.Cmd) {
+	as, ok := currSection.(*actionssection.Model)
+	if !ok || as == nil {
+		return false, nil
+	}
+
+	isNav := key.Matches(msg, m.keys.Up) ||
+		key.Matches(msg, m.keys.Down) ||
+		key.Matches(msg, m.keys.FirstLine) ||
+		key.Matches(msg, m.keys.LastLine) ||
+		m.isPageUpKey(msg) ||
+		m.isPageDownKey(msg)
+	if !isNav {
+		return false, nil
+	}
+
+	switch as.FocusedPane() {
+	case actionssection.PaneWorkflows:
+		// Fall through to the universal handlers which already navigate the
+		// workflow table via currSection.NextRow/PrevRow/etc.
+		return false, nil
+	case actionssection.PaneRuns:
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			as.PrevRun()
+		case key.Matches(msg, m.keys.Down):
+			as.NextRun()
+		case key.Matches(msg, m.keys.FirstLine):
+			as.RunsTable.FirstItem()
+		case key.Matches(msg, m.keys.LastLine):
+			as.RunsTable.LastItem()
+		case m.isPageUpKey(msg):
+			as.RunsTable.PageUp()
+		case m.isPageDownKey(msg):
+			as.RunsTable.PageDown()
+		}
+		return true, m.onViewedRowChanged()
+	case actionssection.PaneDetails:
+		if m.actionRunView == nil {
+			return true, nil
+		}
+		// Forward the navigation key to the embedded actionview even when
+		// its logs search isn't focused. We bypass UpdateEmbedded's
+		// "logs-search-only" guard by calling Update directly.
+		view, actionCmd := m.actionRunView.Update(msg)
+		m.actionRunView = &view
+		return true, actionCmd
+	}
+	return false, nil
+}
+
+// isActionsDetailsLocalKey reports whether the key is a known actionview-local
+// navigation key (pane switching, zoom, log search, etc.) that should be
+// forwarded to the embedded view when its details pane has parent focus.
+func isActionsDetailsLocalKey(msg tea.KeyMsg) bool {
+	s := msg.String()
+	switch s {
+	case "h", "l", "z", "/", "n", "N", "ctrl+n", "ctrl+p", "m":
+		return true
+	}
+	return false
+}
+
+func (m *Model) syncActionsSelection() tea.Cmd {
+	if m.ctx == nil || m.ctx.View != config.ActionsView {
+		return nil
+	}
+	section, ok := m.getCurrSection().(*actionssection.Model)
+	if !ok || section == nil {
+		return nil
+	}
+	cmds := section.SyncSelectedWorkflow()
+	run := section.SelectedRun()
+	if run == nil {
+		m.actionRunView = nil
+		m.actionRunViewKey = ""
+		return tea.Batch(cmds...)
+	}
+	// Use the same width math as renderActionsRunDetailsPane so the first
+	// fetched data is sized correctly before the next render call resizes.
+	thirdWidth := max(0, m.ctx.ScreenWidth-2*((m.ctx.ScreenWidth+2)/3))
+	width := max(0, thirdWidth-2) // account for body padding
+	cmds = append(cmds, m.ensureActionRunView(run, width))
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) saveCurrentPRPreviewState() {
@@ -1582,16 +1831,12 @@ func (m *Model) syncProgramContext() {
 	m.sidebar.UpdateProgramContext(m.ctx)
 	m.prView.UpdateProgramContext(m.ctx)
 	m.issueSidebar.UpdateProgramContext(m.ctx)
-	m.branchSidebar.UpdateProgramContext(m.ctx)
 	m.notificationView.UpdateProgramContext(m.ctx)
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) (cmd tea.Cmd) {
 	var updatedSection section.Section
 	switch sType {
-	case reposection.SectionType:
-		m.repo, cmd = m.repo.Update(msg)
-
 	case notificationssection.SectionType:
 		if id < len(m.notifications) && m.notifications[id] != nil {
 			m.notifications[id], cmd = m.notifications[id].Update(msg)
@@ -1872,7 +2117,17 @@ func (m *Model) ensureActionRunView(run *data.WorkflowRun, width int) tea.Cmd {
 }
 
 func (m *Model) shouldUpdateActionRunView(msg tea.Msg) bool {
-	return m.ctx != nil && m.ctx.View == config.ActionsView && m.actionRunView != nil && actionview.HandlesAsyncMsg(msg)
+	if m.ctx == nil || m.ctx.View != config.ActionsView || m.actionRunView == nil {
+		return false
+	}
+	// Defensive: key messages must always reach the parent's main Update so
+	// that quit, navigation, and section keybindings are never swallowed by
+	// the embedded actionview. HandlesAsyncMsg already excludes key messages,
+	// but guard explicitly in case it ever changes.
+	if _, ok := msg.(tea.KeyMsg); ok {
+		return false
+	}
+	return actionview.HandlesAsyncMsg(msg)
 }
 
 func (m Model) actionsLogsCopySelectionContent() (string, bool) {
@@ -1899,11 +2154,6 @@ func (m *Model) syncSidebar() tea.Cmd {
 	}
 
 	switch row := currRowData.(type) {
-	case branch.BranchData:
-		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
-		cmd = m.branchSidebar.SetRow(&row)
-		m.sidebar.ClearHeader()
-		m.sidebar.SetContent(m.branchSidebar.View())
 	case *prrow.Data:
 		sectionType := prssection.SectionType
 		if currSection := m.getCurrSection(); currSection != nil {
@@ -1935,6 +2185,12 @@ func (m *Model) syncSidebar() tea.Cmd {
 			m.actionRunView.SetSize(width, m.ctx.MainContentHeight)
 			m.sidebar.SetContent(m.actionRunView.EmbeddedView())
 		}
+	case *data.Workflow:
+		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
+		m.actionRunView = nil
+		m.actionRunViewKey = ""
+		m.sidebar.ClearHeader()
+		m.sidebar.SetContent(m.renderActionsWorkflowPreview(row))
 	case *notificationrow.Data:
 		notifId := row.GetId()
 
@@ -1973,6 +2229,22 @@ func (m *Model) syncSidebar() tea.Cmd {
 	}
 
 	return cmd
+}
+
+func (m *Model) renderActionsWorkflowPreview(workflow *data.Workflow) string {
+	if workflow == nil {
+		return ""
+	}
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.ctx.Styles.Common.MainTextStyle.Render(workflow.Name),
+		"",
+		fmt.Sprintf("Repository: %s", workflow.GetRepoNameWithOwner()),
+		fmt.Sprintf("Path:       %s", workflow.Path),
+		fmt.Sprintf("State:      %s", workflow.State),
+		"",
+		m.ctx.Styles.Common.FaintTextStyle.Render("Press enter to view runs for this workflow."),
+	)
 }
 
 func addReviewRequestsForNotificationPR(
@@ -2210,20 +2482,15 @@ func (m *Model) fetchAllViewSections() ([]section.Section, tea.Cmd) {
 	cmds = append(cmds, m.tabs.SetAllLoading()...)
 
 	switch m.ctx.View {
-	case config.RepoView:
-		var cmd tea.Cmd
-		s, cmd := reposection.FetchAllBranches(m.ctx)
-		cmds = append(cmds, cmd)
-		m.repo = &s
-		return nil, tea.Batch(cmds...)
 	case config.NotificationsView:
 		s, notifCmd := notificationssection.FetchAllSections(m.ctx, m.notifications)
 		cmds = append(cmds, notifCmd)
 		m.notifications = s
 		return s, tea.Batch(cmds...)
 	case config.ActionsView:
-		s, actionsCmd := actionssection.FetchAllSections(m.ctx)
+		s, actionsCmd := actionssection.FetchAllSections(m.ctx, m.actions)
 		cmds = append(cmds, actionsCmd)
+		m.actions = s
 		return s, tea.Batch(cmds...)
 	case config.PRsView:
 		s, prcmds := prssection.FetchAllSections(m.ctx, m.prs)
@@ -2238,11 +2505,6 @@ func (m *Model) fetchAllViewSections() ([]section.Section, tea.Cmd) {
 
 func (m *Model) getCurrentViewSections() []section.Section {
 	switch m.ctx.View {
-	case config.RepoView:
-		if m.repo == nil {
-			return []section.Section{}
-		}
-		return []section.Section{m.repo}
 	case config.NotificationsView:
 		if len(m.notifications) == 0 {
 			return []section.Section{}
@@ -2257,14 +2519,36 @@ func (m *Model) getCurrentViewSections() []section.Section {
 	}
 }
 
+// viewHasSearchSection reports whether the given view renders an implicit
+// search section at index 0. Views without one (currently only Actions) are
+// 0-indexed and require tabs to render every section like a normal tab.
+func viewHasSearchSection(v config.ViewType) bool {
+	return v != config.ActionsView
+}
+
+// shouldSyncActionsSelection reports whether the parent should re-sync the
+// embedded actionview after handling the given message. Doing it on every
+// message (including spinner ticks) is wasteful and re-creates the action
+// run view's spinners constantly.
+func shouldSyncActionsSelection(msg tea.Msg) bool {
+	switch msg.(type) {
+	case tea.KeyMsg,
+		tea.WindowSizeMsg,
+		actionssection.SectionWorkflowsFetchedMsg,
+		actionssection.SectionActionsFetchedMsg:
+		return true
+	}
+	return false
+}
+
 func (m *Model) getCurrentViewDefaultSection() int {
 	switch m.ctx.View {
-	case config.RepoView:
-		return 0
 	case config.NotificationsView:
 		return 1 // First notification section after search section
 	case config.PRsView:
 		return 1
+	case config.ActionsView:
+		return 0 // Actions sections are 0-indexed; no search section
 	default:
 		return 1
 	}
@@ -2325,17 +2609,9 @@ func (m *Model) setCurrentViewSections(newSections []section.Section) {
 		m.prs = append(s, newSections...)
 		newSections = m.prs
 	} else if m.ctx.View == config.ActionsView {
-		if missingSearchSection {
-			search := actionssection.NewModel(
-				0,
-				m.ctx,
-				config.ActionsSectionConfig{Title: "", Filters: ""},
-				time.Now(),
-				time.Now(),
-			)
-			s = append(s, &search)
-		}
-		m.actions = append(s, newSections...)
+		// Actions view has no global search section; sections are 0-indexed
+		// and each corresponds to a configured repository.
+		m.actions = newSections
 		newSections = m.actions
 	} else {
 		if missingSearchSection {
@@ -2367,16 +2643,21 @@ func (m *Model) switchSelectedViewBack() tea.Cmd {
 }
 
 func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
-	views := []config.ViewType{config.NotificationsView, config.PRsView, config.IssuesView, config.ActionsView}
-	if config.IsFeatureEnabled(config.FF_REPO_VIEW) {
-		views = append(views, config.RepoView)
-	}
+	views := []config.ViewType{config.PRsView}
+	views = append(views, config.ActionsView, config.IssuesView, config.NotificationsView)
 
 	// Reset notification subject when leaving notifications view
 	if m.ctx.View == config.NotificationsView {
 		keys.SetNotificationSubject(keys.NotificationSubjectNone)
 		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
 		m.notificationView.ClearSubject()
+	}
+
+	// Drop the embedded actionview when leaving the Actions view so its
+	// background interval-fetch ticks self-terminate and memory is freed.
+	if m.ctx.View == config.ActionsView {
+		m.actionRunView = nil
+		m.actionRunViewKey = ""
 	}
 
 	currIndex := 0
@@ -2388,6 +2669,14 @@ func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
 	}
 	nextIndex := (currIndex + direction + len(views)) % len(views)
 	m.ctx.View = views[nextIndex]
+	m.tabs.SetHasSearchSection(viewHasSearchSection(m.ctx.View))
+
+	// The Actions view manages its own three-pane layout and does not use
+	// the global sidebar; close it so MainContentWidth/Height are
+	// recomputed without sidebar reservation.
+	if m.ctx.View == config.ActionsView && m.sidebar.IsOpen {
+		m.sidebar.IsOpen = false
+	}
 
 	m.syncMainContentDimensions()
 	m.setCurrSectionId(m.getCurrentViewDefaultSection())
@@ -2426,14 +2715,6 @@ func (m *Model) isUserDefinedKeybinding(msg tea.KeyMsg) bool {
 
 	if m.ctx.View == config.PRsView {
 		for _, keybinding := range m.ctx.Config.Keybindings.Prs {
-			if keybinding.Builtin == "" && keybinding.Key == msg.String() {
-				return true
-			}
-		}
-	}
-
-	if m.ctx.View == config.RepoView {
-		for _, keybinding := range m.ctx.Config.Keybindings.Branches {
 			if keybinding.Builtin == "" && keybinding.Key == msg.String() {
 				return true
 			}
@@ -2587,14 +2868,6 @@ type visibleRefreshFetchedMsg struct {
 	err    error
 }
 
-type prWatchTick struct{ url string }
-
-type prWatchFetchedMsg struct {
-	url  string
-	data data.EnrichedPullRequestData
-	err  error
-}
-
 var fetchPullRequestForPRWatch = data.FetchPullRequest
 
 func (m *Model) shouldWatchCurrentPR() bool {
@@ -2605,43 +2878,23 @@ func (m *Model) shouldWatchCurrentPR() bool {
 	return m.prView.CurrentPRURL() != ""
 }
 
-func (m *Model) maybeSchedulePRWatch() tea.Cmd {
-	if m.shouldWatchCurrentPR() {
-		m.prWatchURL = m.prView.CurrentPRURL()
-	} else {
-		m.prWatchURL = ""
-	}
-	return m.reconcileVisibleRefreshes()
-}
-
-func fetchPRWatch(url string) tea.Cmd {
-	return func() tea.Msg {
-		pr, err := fetchPullRequestForPRWatch(url)
-		return prWatchFetchedMsg{url: url, data: pr, err: err}
-	}
-}
-
-func (m *Model) applyPRWatchFetched(msg prWatchFetchedMsg) tea.Cmd {
-	if msg.url != m.prView.CurrentPRURL() || !m.shouldWatchCurrentPR() {
-		return nil
-	}
-	if msg.err != nil {
-		log.Error("failed refreshing watched PR", "err", msg.err)
+func (m *Model) applyPRPreviewRefresh(url string, pr data.EnrichedPullRequestData) tea.Cmd {
+	if url != m.prView.CurrentPRURL() || !m.shouldWatchCurrentPR() {
 		return nil
 	}
 
-	m.prView.SetEnrichedPR(msg.data)
-	if pr := m.notificationView.GetSubjectPR(); pr != nil && pr.Primary != nil && pr.Primary.Url == msg.url {
-		prData := msg.data.ToPullRequestData()
+	m.prView.SetEnrichedPR(pr)
+	if subjectPR := m.notificationView.GetSubjectPR(); subjectPR != nil && subjectPR.Primary != nil && subjectPR.Primary.Url == url {
+		prData := pr.ToPullRequestData()
 		m.notificationView.SetSubjectPR(&prrow.Data{
 			Primary:    &prData,
-			Enriched:   msg.data,
+			Enriched:   pr,
 			IsEnriched: true,
 		}, m.notificationView.GetSubjectId())
 	}
 	if m.ctx != nil && m.ctx.View == config.PRsView && m.currSectionId >= 0 && m.currSectionId < len(m.prs) {
 		if prSection, ok := m.prs[m.currSectionId].(*prssection.Model); ok {
-			prSection.EnrichPR(msg.data)
+			prSection.EnrichPR(pr)
 		}
 	}
 
@@ -2651,15 +2904,8 @@ func (m *Model) applyPRWatchFetched(msg prWatchFetchedMsg) tea.Cmd {
 func (m *Model) visibleRefreshTargets() []visibleRefreshTarget {
 	var targets []visibleRefreshTarget
 
-	if m.shouldWatchCurrentPR() {
-		if url := m.prView.CurrentPRURL(); url != "" {
-			targets = append(targets, visibleRefreshTarget{
-				key:      "pr-preview:" + url,
-				kind:     visibleRefreshPRPreview,
-				url:      url,
-				interval: 10 * time.Second,
-			})
-		}
+	if target := m.currentPRPreviewRefreshTarget(); target.key != "" {
+		targets = append(targets, target)
 	}
 
 	if m.ctx != nil && m.ctx.Config != nil && m.ctx.View == config.PRsView &&
@@ -2692,6 +2938,45 @@ func (m *Model) visibleRefreshTargets() []visibleRefreshTarget {
 	}
 
 	return targets
+}
+
+func (m *Model) prPreviewRefreshInterval() time.Duration {
+	if m.ctx == nil || m.ctx.Config == nil {
+		return 10 * time.Second
+	}
+	seconds := m.ctx.Config.Defaults.PreviewRefreshIntervalSeconds
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (m *Model) currentPRPreviewRefreshTarget() visibleRefreshTarget {
+	if !m.shouldWatchCurrentPR() {
+		return visibleRefreshTarget{}
+	}
+	interval := m.prPreviewRefreshInterval()
+	if interval <= 0 {
+		return visibleRefreshTarget{}
+	}
+	url := m.prView.CurrentPRURL()
+	if url == "" {
+		return visibleRefreshTarget{}
+	}
+	return visibleRefreshTarget{
+		key:      "pr-preview:" + url,
+		kind:     visibleRefreshPRPreview,
+		url:      url,
+		interval: interval,
+	}
+}
+
+func (m *Model) fetchCurrentPRPreviewRefresh() tea.Cmd {
+	target := m.currentPRPreviewRefreshTarget()
+	if target.key == "" {
+		return nil
+	}
+	return m.fetchVisibleRefresh(target)
 }
 
 func (m *Model) isVisibleRefreshTargetCurrent(target visibleRefreshTarget) bool {
@@ -2781,6 +3066,7 @@ func (m *Model) reconcileVisibleRefreshes() tea.Cmd {
 		m.visibleRefreshGen++
 		generation := m.visibleRefreshGen
 		m.visibleRefreshes[target.key] = generation
+		log.Debug("scheduling visible refresh", "key", target.key, "kind", target.kind, "interval", target.interval)
 		cmds = append(cmds, tea.Tick(target.interval, func(t time.Time) tea.Msg {
 			return visibleRefreshTick{target: target, generation: generation}
 		}))
@@ -2797,7 +3083,7 @@ func (m *Model) fetchVisibleRefresh(target visibleRefreshTarget) tea.Cmd {
 	case visibleRefreshPRPreview:
 		return func() tea.Msg {
 			pr, err := fetchPullRequestForPRWatch(target.url)
-			return visibleRefreshFetchedMsg{target: target, data: prWatchFetchedMsg{url: target.url, data: pr, err: err}, err: err}
+			return visibleRefreshFetchedMsg{target: target, data: pr, err: err}
 		}
 	case visibleRefreshPRSection:
 		if target.sectionId < 0 || target.sectionId >= len(m.prs) {

@@ -23,7 +23,6 @@ import (
 	data "github.com/dlvhdr/gh-dash/v4/internal/data/actions"
 	api "github.com/dlvhdr/gh-dash/v4/internal/data/actionsapi"
 	parser "github.com/dlvhdr/gh-dash/v4/internal/data/actionsparser"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/actionview/art"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
 
@@ -91,25 +90,25 @@ func NewModel(repo string, number string, opts ModelOpts) Model {
 	runsList.Title = makePill(ListSymbol+" Runs", s.focusedPaneTitleStyle,
 		s.colors.focusedColor)
 	runsList.SetStatusBarItemName("run", "runs")
-	runsList.SetWidth(focusedLargePaneWidth)
+	runsList.SetWidth(largePaneWidth)
 
 	jobsList, jobsDelegate := newJobsDefaultList(s)
 	jobsList.Title = makePill(ListSymbol+" Jobs", s.unfocusedPaneTitleStyle,
 		s.colors.unfocusedColor)
 	jobsList.SetStatusBarItemName("job", "jobs")
-	jobsList.SetWidth(unfocusedLargePaneWidth)
+	jobsList.SetWidth(largePaneWidth)
 
 	stepsList, stepsDelegate := newStepsDefaultList(s)
 	stepsList.Title = makePill(ListSymbol+" Steps", s.unfocusedPaneTitleStyle,
 		s.colors.unfocusedColor)
 	stepsList.SetStatusBarItemName("step", "steps")
-	stepsList.SetWidth(unfocusedLargePaneWidth)
+	stepsList.SetWidth(largePaneWidth)
 
 	checksList, checksDelegate := newChecksDefaultList(s)
 	checksList.Title = makePill(ListSymbol+" checks", s.unfocusedPaneTitleStyle,
 		s.colors.unfocusedColor)
 	checksList.SetStatusBarItemName("step", "checks")
-	checksList.SetWidth(unfocusedLargePaneWidth)
+	checksList.SetWidth(largePaneWidth)
 
 	vp := viewport.New()
 	vp.LeftGutterFunc = func(info viewport.GutterContext) string {
@@ -195,15 +194,19 @@ func (m model) Init() tea.Cmd {
 
 func (m Model) UpdateEmbedded(msg tea.Msg) (Model, tea.Cmd) {
 	m.embedded = true
-	if _, ok := msg.(tea.KeyMsg); ok && !m.logsInput.Focused() {
-		return m, nil
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		// Never consume quit; the parent TUI must always be able to exit.
+		if key.Matches(keyMsg, quitKey) {
+			return m, nil
+		}
+		// Only route keys to the embedded view while logs search is focused;
+		// otherwise the parent handles them.
+		if !m.logsInput.Focused() {
+			return m, nil
+		}
 	}
 
-	next, cmd := m.Update(msg)
-	if nextModel, ok := next.(model); ok {
-		return nextModel, cmd
-	}
-	return m, cmd
+	return m.Update(msg)
 }
 
 func (m *Model) FocusLogsSearch() tea.Cmd {
@@ -286,8 +289,13 @@ func (m *Model) selectCheck(delta int) (bool, tea.Cmd) {
 
 func HandlesAsyncMsg(msg tea.Msg) bool {
 	switch msg.(type) {
-	case spinner.TickMsg,
-		startIntervalFetching,
+	// NOTE: spinner.TickMsg is intentionally NOT included here. spinner.TickMsg
+	// is a globally-shared message type used by multiple components (e.g. the
+	// parent's task spinner and the tabs' per-section loading spinners).
+	// Routing it exclusively to the embedded actionview would freeze every
+	// other spinner in the app. The actionview's own internal spinners keep
+	// receiving ticks via the spinner model's returned Cmds.
+	case startIntervalFetching,
 		startRunIntervalFetching,
 		runModeFetchedMsg,
 		runModeIntervalTickMsg,
@@ -314,7 +322,7 @@ func (m *Model) SetSize(width int, height int) {
 	m.setFocusedPaneStyles()
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	cmds := make([]tea.Cmd, 0)
 
@@ -348,6 +356,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if rmMsg.err != nil {
 			log.Debug("error when fetching run", "err", rmMsg.err)
 			m.err = rmMsg.err
+			if m.embedded {
+				// Surface the error via EmbeddedView() instead of quitting
+				// the host TUI.
+				return m, nil
+			}
 			msgCmd := tea.Printf("%s\nrepo=%s, runID=%s\nOriginal error: %v\n",
 				lipgloss.NewStyle().Foreground(m.styles.colors.errorColor).Bold(true).Render(
 					"❌ Workflow run not found.",
@@ -413,6 +426,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wrMsg.err != nil {
 			log.Debug("error when fetching workflow runs", "err", wrMsg.err)
 			m.err = wrMsg.err
+			if m.embedded {
+				// Surface the error via EmbeddedView() instead of quitting
+				// the host TUI.
+				return m, nil
+			}
 			msgCmd := tea.Printf("%s\nrepo=%s, number=%s\nOriginal error: %v\n",
 				lipgloss.NewStyle().Foreground(m.styles.colors.errorColor).Bold(true).Render(
 					"❌ Pull request not found.",
@@ -493,7 +511,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.setFocusedPaneStyles()
 	case tea.KeyPressMsg:
-		if key.Matches(msg, quitKey) {
+		// Embedded actionview must never quit the program itself; the parent
+		// TUI owns quit handling. When running standalone (non-embedded),
+		// honor ctrl+c so the sub-tool can still exit cleanly.
+		if !m.embedded && key.Matches(msg, quitKey) {
 			log.Info("quitting", "msg", msg)
 			return m, tea.Quit
 		}
@@ -678,6 +699,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg
+		if m.embedded {
+			// Surface the error via EmbeddedView() instead of quitting
+			// the host TUI.
+			return m, nil
+		}
 		return m, tea.Quit
 	}
 
@@ -771,12 +797,6 @@ func (m Model) EmbeddedView() string {
 	return lipgloss.NewStyle().Width(m.width).MaxWidth(m.width).Render(panes)
 }
 
-func (m Model) View() tea.View {
-	var v tea.View
-	v.SetContent(m.EmbeddedView())
-	return v
-}
-
 func (m *model) viewHierarchicalChecks() string {
 	runsPane := makePointingBorder(m.paneStyle(PaneRuns).Render(m.runsList.View()))
 	jobsPane := makePointingBorder(m.paneStyle(PaneJobs).Render(m.jobsList.View()))
@@ -797,18 +817,6 @@ func (m *model) viewHierarchicalChecks() string {
 		case PaneLogs:
 			panes = append(panes, m.viewLogs())
 		}
-	} else if m.width != 0 && m.width <= smallScreen {
-		switch m.focusedPane {
-		case PaneRuns:
-			panes = append(panes, runsPane)
-		case PaneJobs:
-			panes = append(panes, jobsPane)
-		case PaneSteps:
-			panes = append(panes, stepsPane)
-		case PaneLogs:
-			break
-		}
-		panes = append(panes, m.viewLogs())
 	} else {
 		panes = append(panes, runsPane)
 		panes = append(panes, jobsPane)
@@ -847,16 +855,6 @@ func (m *model) viewFlatChecks() string {
 		case PaneLogs:
 			panes = append(panes, m.viewLogs())
 		}
-	} else if m.width != 0 && m.width <= smallScreen {
-		switch m.focusedPane {
-		case PaneChecks:
-			panes = append(panes, checksPane)
-		case PaneSteps:
-			panes = append(panes, stepsPane)
-		case PaneLogs:
-			break
-		}
-		panes = append(panes, m.viewLogs())
 	} else {
 		panes = append(panes, checksPane)
 		panes = append(panes, stepsPane)
@@ -986,15 +984,9 @@ func (m *model) setFocusedPaneStyles() {
 }
 
 func (m *model) setListFocusedStyles(l *list.Model, delegate *list.ItemDelegate, p pane) {
-	if m.width != 0 && m.width <= smallScreen {
-		l.Styles.Title = m.styles.focusedPaneTitleStyle.Bold(false)
-		l.Styles.TitleBar = m.styles.unfocusedPaneTitleBarStyle.Bold(false)
-		l.Title = m.getPaneTitle(l)
-	} else {
-		l.Styles.Title = m.styles.focusedPaneTitleStyle
-		l.Styles.TitleBar = m.styles.unfocusedPaneTitleBarStyle
-		l.Title = makePill(m.getPaneTitle(l), l.Styles.Title, m.styles.colors.focusedColor)
-	}
+	l.Styles.Title = m.styles.focusedPaneTitleStyle
+	l.Styles.TitleBar = m.styles.unfocusedPaneTitleBarStyle
+	l.Title = makePill(m.getPaneTitle(l), l.Styles.Title, m.styles.colors.focusedColor)
 
 	w := m.getFocusedPaneWidth(l, p)
 	l.SetWidth(w)
@@ -1003,14 +995,9 @@ func (m *model) setListFocusedStyles(l *list.Model, delegate *list.ItemDelegate,
 }
 
 func (m *model) setListUnfocusedStyles(l *list.Model, delegate *list.ItemDelegate) {
-	if m.width > smallScreen {
-		l.Styles.Title = m.styles.unfocusedPaneTitleStyle
-		l.Title = makePill(m.getPaneTitle(l), l.Styles.Title, m.styles.colors.unfocusedColor)
-		l.Styles.TitleBar = m.styles.unfocusedPaneTitleBarStyle
-	} else {
-		l.Styles.Title = m.styles.unfocusedPaneTitleStyle.Bold(false)
-		l.Styles.TitleBar = m.styles.unfocusedPaneTitleBarStyle.Bold(false)
-	}
+	l.Styles.Title = m.styles.unfocusedPaneTitleStyle
+	l.Title = makePill(m.getPaneTitle(l), l.Styles.Title, m.styles.colors.unfocusedColor)
+	l.Styles.TitleBar = m.styles.unfocusedPaneTitleBarStyle
 
 	w := m.getUnfocusedPaneWidth()
 	l.SetWidth(w)
@@ -1050,7 +1037,7 @@ func newList(styles styles, delegate list.ItemDelegate) list.Model {
 	l.Styles.StatusBarFilterCount = l.Styles.StatusBarFilterCount.Foreground(
 		styles.colors.faintColor,
 	)
-	l.Styles.NoItems = l.Styles.NoItems.Width(unfocusedLargePaneWidth).
+	l.Styles.NoItems = l.Styles.NoItems.Width(largePaneWidth).
 		Foreground(styles.colors.faintColor)
 	l.Styles.PaginationStyle = lipgloss.NewStyle().
 		Foreground(styles.colors.faintColor).
@@ -1263,9 +1250,7 @@ func (m *model) logsWidth() int {
 	}
 
 	var borders int
-	if m.width != 0 && m.width <= smallScreen {
-		borders = 1
-	} else if m.flat {
+	if m.flat {
 		borders = 1
 	} else {
 		borders = 2
@@ -1304,7 +1289,7 @@ func (m *model) fullScreenMessageView(message string) string {
 
 func (m *model) noLogsView(message string) string {
 	emptySetArt := strings.Builder{}
-	for _, char := range art.EmptySet {
+	for _, char := range emptySetIllustration {
 		if char == '╱' {
 			emptySetArt.WriteString(lipgloss.NewStyle().Foreground(
 				m.styles.colors.errorColor,
@@ -1528,7 +1513,7 @@ func (m *model) logsContentView() string {
 		return m.fullScreenMessageView(
 			lipgloss.JoinVertical(
 				lipgloss.Center,
-				lipgloss.NewStyle().Foreground(m.styles.palette.BrightWhite).Render(art.CheckmarkSign),
+				lipgloss.NewStyle().Foreground(m.styles.palette.BrightWhite).Render(checkmarkSignArt),
 				"",
 				m.styles.faintFgStyle.Bold(true).Render(
 					fmt.Sprintf("No checks reported on the '%s' branch", m.prWithChecks.HeadRefName),
@@ -1577,7 +1562,7 @@ func (m *model) logsContentView() string {
 
 	if ji.job.Bucket == data.CheckBucketCancel {
 		return m.fullScreenMessageView(lipgloss.JoinVertical(lipgloss.Center,
-			m.styles.faintFgStyle.Render(art.StopSign),
+			m.styles.faintFgStyle.Render(stopSignArt),
 			m.styles.faintFgStyle.Bold(true).Render("This job was cancelled")))
 	}
 
@@ -1703,68 +1688,53 @@ func (m *model) getFocusedPaneWidth(l *list.Model, p pane) int {
 	if m.zoomedPane != nil && p == *m.zoomedPane {
 		return m.width - 1
 	}
-	if m.width > smallScreen {
-		if len(l.Items()) == 0 {
-			return unfocusedLargePaneWidth
-		}
-		return focusedLargePaneWidth
-	}
-
-	return focusedSmallPaneWidth
+	return m.paneWidth()
 }
 
 func (m *model) getPaneTitle(l *list.Model) string {
-	if m.width != 0 && m.width <= smallScreen {
-		s := m.styles.focusedPaneTitleStyle.Bold(false).UnsetBackground()
-		switch m.focusedPane {
-		case PaneChecks:
-			return lipgloss.JoinHorizontal(lipgloss.Top,
-				makePill(s.Bold(true).Render("Checks"), l.Styles.Title,
-					m.styles.colors.focusedColor), s.Render(" > Steps"))
-		case PaneRuns:
-			return lipgloss.JoinHorizontal(lipgloss.Top,
-				makePill(s.Bold(true).Render("Runs"), l.Styles.Title,
-					m.styles.colors.focusedColor), s.Render(" > Jobs > Steps"))
-		case PaneJobs:
-			return lipgloss.JoinHorizontal(lipgloss.Top, s.Render("Runs > "),
-				makePill(s.Bold(true).Render("Jobs"), l.Styles.Title,
-					m.styles.colors.focusedColor), s.Render(" > Steps"))
-		case PaneSteps:
-			if m.flat {
-				return lipgloss.JoinHorizontal(
-					lipgloss.Top,
-					s.Render("Checks > "),
-					makePill(
-						s.Bold(true).Render("Steps"),
-						l.Styles.Title,
-						m.styles.colors.focusedColor,
-					),
-				)
-			}
-			return lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				s.Render("Runs > Jobs > "),
-				makePill(
-					s.Bold(true).Render("Steps"),
-					l.Styles.Title,
-					m.styles.colors.focusedColor,
-				),
-			)
-		case PaneLogs:
-			return ""
-		}
-	}
-
 	_, itemsName := l.StatusBarItemName()
 	return strings.ToUpper(string(itemsName[0])) + itemsName[1:]
 }
 
 func (m *model) getUnfocusedPaneWidth() int {
-	if m.width != 0 && m.width <= smallScreen {
-		return 0
-	}
+	return m.paneWidth()
+}
 
-	return unfocusedLargePaneWidth
+// paneWidth returns the width to use for each side pane (runs/jobs/steps/checks).
+// In standalone mode, it falls back to the legacy fixed largePaneWidth.
+// When embedded, panes share the available width with the logs pane.
+func (m *model) paneWidth() int {
+	if !m.embedded || m.width <= 0 {
+		return largePaneWidth
+	}
+	visiblePanes := m.visibleSidePaneCount()
+	// Reserve at least ~30 columns for the logs pane.
+	const minLogsWidth = 30
+	available := max(0, m.width-minLogsWidth)
+	if visiblePanes <= 0 {
+		return largePaneWidth
+	}
+	w := available / visiblePanes
+	if w < 8 {
+		w = 8
+	}
+	if w > largePaneWidth {
+		return largePaneWidth
+	}
+	return w
+}
+
+// visibleSidePaneCount returns the number of side panes that are currently
+// rendered alongside the logs pane (varies by flat vs hierarchical mode and
+// whether the steps pane is shown).
+func (m *model) visibleSidePaneCount() int {
+	if m.flat {
+		return 1 // checksList only
+	}
+	if m.shouldShowSteps() {
+		return 3 // runs, jobs, steps
+	}
+	return 2 // runs, jobs
 }
 
 func (m *model) goToErrorInLogs() {
@@ -1790,7 +1760,7 @@ func (m *model) getLogsViewportHeight() int {
 	h := m.getMainContentHeight()
 
 	// TODO: take borders from logsInput view
-	vph := h - paneTitleHeight
+	vph := h - 1
 	if m.logsViewport.GetContent() != "" {
 		vph -= lipgloss.Height(m.logsInput.View()) + 2 // borders
 	}
@@ -1800,10 +1770,7 @@ func (m *model) getLogsViewportHeight() int {
 }
 
 func (m *model) getMainContentHeight() int {
-	if m.embedded {
-		return m.height - footerHeight
-	}
-	return m.height - headerHeight - footerHeight
+	return m.height
 }
 
 func (m *model) setHeights() {
@@ -1819,6 +1786,14 @@ func (m *model) setHeights() {
 }
 
 func (m *model) setWidths() {
+	// Apply responsive pane widths first; logsWidth() consults the side
+	// panes' widths to compute the remaining space.
+	pw := m.paneWidth()
+	m.runsList.SetWidth(pw)
+	m.jobsList.SetWidth(pw)
+	m.stepsList.SetWidth(pw)
+	m.checksList.SetWidth(pw)
+
 	w := m.logsWidth()
 	m.logsViewport.SetWidth(w)
 	m.logsInput.SetWidth(w - 10)

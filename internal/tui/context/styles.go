@@ -120,8 +120,8 @@ func InitStyles(theme theme.Theme) Styles {
 	}
 	s.Colors.OpenPR = s.Colors.OpenIssue
 	s.Colors.ClosedPR = compat.AdaptiveColor{
-		Light: lipgloss.Color("#656C76"),
-		Dark:  lipgloss.Color("#656C76"),
+		Light: lipgloss.Color("#F85149"),
+		Dark:  lipgloss.Color("#F85149"),
 	}
 	s.Colors.MergedPR = compat.AdaptiveColor{
 		Light: lipgloss.Color("#A371F7"),

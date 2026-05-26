@@ -90,9 +90,6 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	case config.PRsView:
 		additionalKeys = PRFullHelp()
 		customKeys = append(customKeys, CustomPRBindings...)
-	case config.RepoView:
-		additionalKeys = BranchFullHelp()
-		customKeys = append(customKeys, CustomBranchBindings...)
 	case config.NotificationsView:
 		additionalKeys = NotificationFullHelp()
 		customKeys = append(customKeys, CustomNotificationBindings...)
@@ -304,18 +301,13 @@ var Keys = &KeyMap{
 }
 
 // Rebind will update our saved keybindings from configuration values.
-func Rebind(universal, issueKeys, prKeys, branchKeys, notificationKeys []config.Keybinding) error {
+func Rebind(universal, issueKeys, prKeys, notificationKeys []config.Keybinding) error {
 	err := rebindUniversal(universal)
 	if err != nil {
 		return err
 	}
 
 	err = rebindPRKeys(prKeys)
-	if err != nil {
-		return err
-	}
-
-	err = rebindBranchKeys(branchKeys)
 	if err != nil {
 		return err
 	}
@@ -333,7 +325,6 @@ var (
 	CustomUniversalBindings    []key.Binding
 	CustomPRBindings           []key.Binding
 	CustomIssueBindings        []key.Binding
-	CustomBranchBindings       []key.Binding
 	CustomNotificationBindings []key.Binding
 	CustomActionBindings       []key.Binding
 )

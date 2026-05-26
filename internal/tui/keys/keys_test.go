@@ -278,6 +278,10 @@ func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, PRKeys.RequestReview, "r")
 	requireKeys(t, PRKeys.SortOrder, "S")
 	requireKeys(t, IssueKeys.SortOrder, "S")
+	requireKeys(t, ActionsKeys.SortOrder, "S")
+	requireKeys(t, ActionsKeys.Rerun, "ctrl+r")
+	requireKeys(t, ActionsKeys.RerunFailed, "ctrl+f")
+	requireKeys(t, ActionsKeys.Cancel, "x")
 	requireKeys(t, Keys.LocalSearch, "s")
 }
 
@@ -290,9 +294,6 @@ func TestDefaultViewSwitchKeybindingsAreUnbound(t *testing.T) {
 	}
 	if len(NotificationKeys.SwitchToPRs.Keys()) != 0 {
 		t.Fatalf("expected notification view switch key to be unbound by default, got %v", NotificationKeys.SwitchToPRs.Keys())
-	}
-	if len(BranchKeys.ViewPRs.Keys()) != 0 {
-		t.Fatalf("expected branch view switch key to be unbound by default, got %v", BranchKeys.ViewPRs.Keys())
 	}
 }
 

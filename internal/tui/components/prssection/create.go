@@ -13,6 +13,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/fuzzyselect"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tasks"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 )
@@ -89,6 +90,7 @@ func (m *Model) PrepareCreatePRForm(branches *RepoBranches) (tea.Cmd, error) {
 	if err := m.validateCanCreatePR(); err != nil {
 		return nil, err
 	}
+	m.CreatePRForm.SetCreateMode()
 	repoName, _ := m.repoFromFilters()
 	m.createPRBranchRequestID++
 	if branches != nil && branches.RepoName == repoName {
@@ -106,10 +108,45 @@ func (m *Model) PrepareCreatePRForm(branches *RepoBranches) (tea.Cmd, error) {
 	}, nil
 }
 
+func (m *Model) PrepareEditPRForm(pr *prrow.Data, branches *RepoBranches) (tea.Cmd, error) {
+	if pr == nil || pr.Primary == nil {
+		return nil, errors.New("current selection isn't associated with a PR")
+	}
+
+	repoName := pr.Primary.Repository.NameWithOwner
+	m.createPRBranchRequestID++
+	m.CreatePRForm.SetEditPR(pr.Primary.Title, pr.Primary.Body, pr.Primary.HeadRefName, pr.Primary.BaseRefName)
+	if branches != nil && branches.RepoName == repoName {
+		if branches.Err != nil {
+			m.CreatePRForm.SetBranchesError(branches.Err)
+		} else {
+			m.CreatePRForm.SetBranchSuggestions(branches.Branches)
+		}
+	} else if m.Ctx != nil && m.Ctx.Config != nil {
+		if _, ok := common.GetRepoLocalPath(repoName, m.Ctx.Config.RepoPaths); ok {
+			m.CreatePRForm.SetBranchesLoading()
+		} else {
+			m.CreatePRForm.SetBranchSuggestions([]fuzzyselect.Suggestion{{Value: pr.Primary.BaseRefName}})
+		}
+	} else {
+		m.CreatePRForm.SetBranchSuggestions([]fuzzyselect.Suggestion{{Value: pr.Primary.BaseRefName}})
+	}
+
+	return func() tea.Msg {
+		return RefreshRepoBranchesMsg{SectionId: m.Id, RepoName: repoName}
+	}, nil
+}
+
 func (m *Model) ApplyCreatePRBranches(branches RepoBranches) bool {
+	action := m.GetPromptConfirmationAction()
 	repoName, ok := m.repoFromFilters()
-	if !m.IsPromptConfirmationShown || m.GetPromptConfirmationAction() != "create_pr" ||
-		!ok || branches.RepoName != repoName {
+	if action == "edit_pr" {
+		if pr, ok := m.GetCurrRow().(*prrow.Data); ok && pr != nil && pr.Primary != nil {
+			repoName = pr.Primary.Repository.NameWithOwner
+			ok = true
+		}
+	}
+	if !m.IsPromptConfirmationShown || (action != "create_pr" && action != "edit_pr") || !ok || branches.RepoName != repoName {
 		return false
 	}
 	if branches.Err != nil {
@@ -117,7 +154,11 @@ func (m *Model) ApplyCreatePRBranches(branches RepoBranches) bool {
 		m.Ctx.Error = branches.Err
 		return true
 	}
-	m.CreatePRForm.SetBranches(branches.Branches, branches.Head, branches.Base)
+	if action == "edit_pr" {
+		m.CreatePRForm.SetBranchSuggestions(branches.Branches)
+	} else {
+		m.CreatePRForm.SetBranches(branches.Branches, branches.Head, branches.Base)
+	}
 	return true
 }
 
@@ -163,6 +204,23 @@ func (m *Model) createPR(title string, body string, head string, base string) (t
 			Msg:         createPRCreatedMsg{PR: createdPR},
 		}
 	}), nil
+}
+
+func (m *Model) editPR(title string, body string, base string) (tea.Cmd, error) {
+	if m.CreatePRForm.BranchesLoading() {
+		return nil, errors.New("branches are still loading")
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil, errors.New("PR title is required")
+	}
+	pr, ok := m.GetCurrRow().(*prrow.Data)
+	if !ok || pr == nil || pr.Primary == nil {
+		return nil, errors.New("current selection isn't associated with a PR")
+	}
+
+	sid := tasks.SectionIdentifier{Id: m.Id, Type: SectionType}
+	return tasks.EditPR(m.Ctx, sid, pr, title, body, strings.TrimSpace(base)), nil
 }
 
 func fetchCreatedPRData(output string) *prrow.Data {

@@ -62,9 +62,6 @@ prSections:
       Title: Needs My Review
     - Filters: is:open involves:@me -author:@me
       Title: Involved
-repo:
-    branchesRefetchIntervalSeconds: 30
-    prsRefetchIntervalSeconds: 60
 repoPaths: {}
 showAuthorIcons: true
 smartFilteringAtLaunch: true

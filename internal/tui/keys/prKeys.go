@@ -102,7 +102,7 @@ var PRKeys = PRKeyMap{
 	),
 	Update: key.NewBinding(
 		key.WithKeys("u"),
-		key.WithHelp("u", "update pr from base branch"),
+		key.WithHelp("u", "edit PR"),
 	),
 	ApproveWorkflows: key.NewBinding(
 		key.WithKeys("V"),

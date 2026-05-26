@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/carousel"
@@ -25,11 +24,12 @@ type SectionTab struct {
 }
 
 type Model struct {
-	sections      []section.Section
-	sectionTabs   []SectionTab
-	carousel      carousel.Model
-	ctx           *context.ProgramContext
-	latestVersion string
+	sections         []section.Section
+	sectionTabs      []SectionTab
+	carousel         carousel.Model
+	ctx              *context.ProgramContext
+	latestVersion    string
+	hasSearchSection bool
 }
 
 func NewModel(ctx *context.ProgramContext) Model {
@@ -39,11 +39,20 @@ func NewModel(ctx *context.ProgramContext) Model {
 		carousel.WithSeparators(),
 	)
 	m := Model{
-		carousel: c,
+		carousel:         c,
+		hasSearchSection: true,
 	}
 	m.UpdateProgramContext(ctx)
 
 	return m
+}
+
+// SetHasSearchSection controls whether the tabs render an implicit search
+// section at index 0 (special-cased on the right with a search icon).
+// Views like Actions that have no global search bar should set this to false
+// so their first section is rendered like any other tab.
+func (m *Model) SetHasSearchSection(v bool) {
+	m.hasSearchSection = v
 }
 
 func (m Model) Init() tea.Cmd {
@@ -71,7 +80,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	c := lipgloss.JoinVertical(lipgloss.Left, m.viewTabs(), m.viewSectionTabs())
+	c := m.viewSectionTabs()
 	logo := m.viewLogo()
 	content := m.ctx.Styles.Tabs.TabsRow.
 		Width(m.ctx.ScreenWidth).
@@ -85,46 +94,14 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, content, m.focusDivider())
 }
 
-func (m Model) viewTabs() string {
-	views := []config.ViewType{config.PRsView, config.IssuesView, config.NotificationsView, config.ActionsView}
-	labels := map[config.ViewType]string{
-		config.PRsView:           "Pull Requests",
-		config.IssuesView:        "Issues",
-		config.NotificationsView: "Notifications",
-		config.ActionsView:       "Actions",
-	}
-	parts := make([]string, 0, len(views)*2-1)
-	inactiveStyle := lipgloss.NewStyle().
-		Padding(0, 1).
-		Background(lipgloss.Color("#171A2B")).
-		Foreground(lipgloss.Color("#7F86B8"))
-	activeStyle := inactiveStyle.
-		Background(lipgloss.Color("#3B315F")).
-		Foreground(lipgloss.Color("#F4F1FF")).
-		Bold(true)
-	separatorStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("#171A2B")).
-		Foreground(lipgloss.Color("#7F86B8"))
-	for i, view := range views {
-		style := inactiveStyle
-		if m.ctx.View == view {
-			style = activeStyle
-		}
-		parts = append(parts, style.Render(labels[view]))
-		if i < len(views)-1 {
-			parts = append(parts, separatorStyle.Render("|"))
-		}
-	}
-	return lipgloss.PlaceHorizontal(
-		m.ctx.ScreenWidth,
-		lipgloss.Center,
-		lipgloss.JoinHorizontal(lipgloss.Top, parts...),
-	)
-}
-
 func (m Model) viewSectionTabs() string {
 	if len(m.sectionTabs) == 0 {
 		return ""
+	}
+
+	if !m.hasSearchSection {
+		// No implicit search section; render every tab left-to-right.
+		return m.renderSectionTabItems(0, len(m.sectionTabs))
 	}
 
 	left := m.renderSectionTabItems(1, len(m.sectionTabs))
@@ -154,7 +131,8 @@ func (m Model) sectionTabTitle(i int) string {
 	}
 	cfg := m.sectionTabs[i].section.GetConfig()
 	title := cfg.Title
-	if i == 0 {
+	isSearchIndex := m.hasSearchSection && i == 0
+	if isSearchIndex {
 		if title == "" {
 			title = constants.SearchIcon
 		}
@@ -249,8 +227,8 @@ func (m *Model) UpdateTabTitles() {
 	for i, tab := range m.sectionTabs {
 		cfg := tab.section.GetConfig()
 		title := cfg.Title
-		// handle search section
-		if i == 0 {
+		isSearchIndex := m.hasSearchSection && i == 0
+		if isSearchIndex {
 			if title == "" {
 				title = constants.SearchIcon
 			}
