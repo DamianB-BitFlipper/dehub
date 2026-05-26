@@ -8,9 +8,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	data "github.com/dlvhdr/gh-dash/v4/internal/data/actions"
 )
@@ -25,11 +23,7 @@ type runItem struct {
 
 // Title implements /charm.land/bubbles.list.DefaultItem.Title
 func (i *runItem) Title() string {
-	status := i.viewStatus()
-	s := i.meta.TitleStyle()
-	w := i.meta.width - lipgloss.Width(status) - 2
-	return lipgloss.JoinHorizontal(lipgloss.Top, s.Render(status), s.Render(" "),
-		s.Width(w).Render(ansi.Truncate(s.Render(i.run.Name), w, Ellipsis)))
+	return i.meta.renderTitleWithStatus(i.viewStatus(), i.run.Name)
 }
 
 // Description implements /charm.land/bubbles.list.DefaultItem.Description
@@ -89,28 +83,11 @@ func (d *runsDelegate) Render(w io.Writer, m list.Model, index int, item list.It
 	d.commonDelegate.Render(w, m, index, ri, &ri.meta)
 }
 
-// Height implements charm.land/bubbles.list.ItemDelegate.Height
-func (d *runsDelegate) Height() int {
-	return 2
-}
-
-// Spacing implements charm.land/bubbles.list.ItemDelegate.Spacing
-func (d *runsDelegate) Spacing() int {
-	return 1
-}
-
 // Update implements charm.land/bubbles.list.ItemDelegate.Update
 func (d *runsDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	selected, ok := m.SelectedItem().(*runItem)
-
 	if !ok {
 		return nil
-	}
-
-	selectedID := selected.run.Id
-	for _, it := range m.VisibleItems() {
-		ri := it.(*runItem)
-		ri.meta.focused = selectedID == ri.run.Id
 	}
 
 	switch msg := msg.(type) {
@@ -126,7 +103,11 @@ func (d *runsDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 }
 
 func newRunItemDelegate(styles styles) list.ItemDelegate {
-	d := runsDelegate{commonDelegate{styles: styles, focused: true}}
+	// The Runs pane follows the conventional pattern: its selection is
+	// rendered prominently only when the pane has focus. setFocusedPaneStyles
+	// flips prominentSelection at runtime as the user navigates between
+	// panes.
+	d := runsDelegate{commonDelegate{styles: styles}}
 	return &d
 }
 

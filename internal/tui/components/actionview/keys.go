@@ -2,6 +2,7 @@ package actionview
 
 import (
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 )
@@ -106,7 +107,75 @@ var (
 		key.WithKeys("ctrl+r"),
 		key.WithHelp("ctrl+r", "rerun"),
 	)
+
+	prevStepKey = key.NewBinding(
+		key.WithKeys(","),
+		key.WithHelp(",", "previous step"),
+	)
+
+	nextStepKey = key.NewBinding(
+		key.WithKeys("."),
+		key.WithHelp(".", "next step"),
+	)
+
+	scrollLogsUpKey = key.NewBinding(
+		key.WithKeys("ctrl+,"),
+		key.WithHelp("ctrl+,", "scroll logs up"),
+	)
+
+	scrollLogsDownKey = key.NewBinding(
+		key.WithKeys("ctrl+."),
+		key.WithHelp("ctrl+.", "scroll logs down"),
+	)
 )
+
+// allLocalKeys lists every key.Binding that is "actionview-local" in the
+// sense that the actionview's own Update is the authoritative handler for
+// it. Both embedding sites (the PR Checks tab via prview.UpdateEmbedded,
+// and the dashboard Actions view's Details pane) consult IsLocalKey to
+// decide whether to forward a key into the actionview or handle it
+// themselves. Keeping the list here makes actionview the single source of
+// truth for "what is an actionview key" so feature additions only need to
+// touch this package.
+func allLocalKeys() []key.Binding {
+	return []key.Binding{
+		openUrlKey,
+		openPRKey,
+		nextRowKey,
+		prevRowKey,
+		zoomPaneKey,
+		nextPaneKey,
+		prevPaneKey,
+		gotoTopKey,
+		gotoBottomKey,
+		rightKey,
+		leftKey,
+		searchKey,
+		modeKey,
+		cancelSearchKey,
+		applySearchKey,
+		nextSearchMatchKey,
+		prevSearchMatchKey,
+		refreshAllKey,
+		rerunKey,
+		prevStepKey,
+		nextStepKey,
+		scrollLogsUpKey,
+		scrollLogsDownKey,
+	}
+}
+
+// IsLocalKey reports whether msg matches any actionview-local key binding.
+// Embedding sites use this to gate forwarding of keys into the actionview's
+// Update; non-key messages return false.
+func IsLocalKey(msg tea.KeyMsg) bool {
+	for _, b := range allLocalKeys() {
+		if key.Matches(msg, b) {
+			return true
+		}
+	}
+	return false
+}
 
 // RebindActionsKeybindings applies user overrides to the embedded
 // actionview's local keybindings. These bindings are only consulted when the
@@ -162,6 +231,14 @@ func RebindActionsKeybindings(bindings []config.Keybinding) error {
 			refreshAllKey = kb.NewBinding(&refreshAllKey)
 		case "rerun":
 			rerunKey = kb.NewBinding(&rerunKey)
+		case "prevStep":
+			prevStepKey = kb.NewBinding(&prevStepKey)
+		case "nextStep":
+			nextStepKey = kb.NewBinding(&nextStepKey)
+		case "scrollLogsUp":
+			scrollLogsUpKey = kb.NewBinding(&scrollLogsUpKey)
+		case "scrollLogsDown":
+			scrollLogsDownKey = kb.NewBinding(&scrollLogsDownKey)
 		default:
 			continue
 		}

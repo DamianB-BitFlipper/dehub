@@ -9,9 +9,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	api "github.com/dlvhdr/gh-dash/v4/internal/data/actionsapi"
 	apputils "github.com/dlvhdr/gh-dash/v4/internal/utils"
@@ -26,11 +24,7 @@ type stepItem struct {
 
 // Title implements /charm.land/bubbles.list.DefaultItem.Title
 func (i *stepItem) Title() string {
-	status := i.viewConclusion()
-	s := i.meta.TitleStyle()
-	w := i.meta.width - lipgloss.Width(status) - 2
-	return lipgloss.JoinHorizontal(lipgloss.Top, s.Render(status), s.Render(" "),
-		s.Width(w).Render(ansi.Truncate(s.Render(i.step.Name), w, Ellipsis)))
+	return i.meta.renderTitleWithStatus(i.viewConclusion(), i.step.Name)
 }
 
 // Description implements /charm.land/bubbles.list.DefaultItem.Description
@@ -91,7 +85,10 @@ type stepsDelegate struct {
 }
 
 func newStepItemDelegate(styles styles) list.ItemDelegate {
-	d := stepsDelegate{commonDelegate{styles: styles, focused: true}}
+	// The Steps pane intentionally keeps its selection rendered prominently
+	// even when blurred, so the user can see which step's logs they are
+	// reading. See itemMeta for the full rationale.
+	d := stepsDelegate{commonDelegate{styles: styles, prominentSelection: true}}
 	return &d
 }
 

@@ -39,12 +39,12 @@ var ActionsKeys = ActionsKeyMap{
 		key.WithHelp("x", "cancel workflow"),
 	),
 	FocusNextPane: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "focus next pane"),
+		key.WithKeys("ctrl+right"),
+		key.WithHelp("Ctrl+→", "focus next pane"),
 	),
 	FocusPrevPane: key.NewBinding(
-		key.WithKeys("shift+tab"),
-		key.WithHelp("shift+tab", "focus prev pane"),
+		key.WithKeys("ctrl+left"),
+		key.WithHelp("Ctrl+←", "focus prev pane"),
 	),
 }
 

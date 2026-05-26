@@ -42,28 +42,11 @@ func (d *checksDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	d.commonDelegate.Render(w, m, index, ri, &ri.meta)
 }
 
-// Height implements github.com/charmbracelet/bubbles.list.ItemDelegate.Height
-func (d *checksDelegate) Height() int {
-	return 2
-}
-
-// Spacing implements github.com/charmbracelet/bubbles.list.ItemDelegate.Spacing
-func (d *checksDelegate) Spacing() int {
-	return 1
-}
-
 // Update implements github.com/charmbracelet/bubbles.list.ItemDelegate.Update
 func (d *checksDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	selected, ok := m.SelectedItem().(*checkItem)
-
 	if !ok {
 		return nil
-	}
-
-	selectedID := selected.job.Id
-	for _, it := range m.VisibleItems() {
-		ri := it.(*checkItem)
-		ri.meta.focused = selectedID == ri.job.Id
 	}
 
 	switch msg := msg.(type) {
@@ -79,7 +62,10 @@ func (d *checksDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 }
 
 func newCheckItemDelegate(styles styles) list.ItemDelegate {
-	d := checksDelegate{commonDelegate{styles: styles, focused: true}}
+	// The Checks pane intentionally keeps its selection rendered prominently
+	// even when blurred, so the user can see which check's logs they are
+	// reading. See itemMeta for the full rationale.
+	d := checksDelegate{commonDelegate{styles: styles, prominentSelection: true}}
 	return &d
 }
 

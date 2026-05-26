@@ -9,8 +9,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/actionssection"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/carousel"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
@@ -147,6 +149,10 @@ func (m Model) sectionTabTitle(i int) string {
 func (m Model) focusDivider() string {
 	primary := color.Color(m.ctx.Theme.PrimaryBorder)
 	focus := color.Color(lipgloss.Color("#F6E58D"))
+	if m.ctx.View == config.ActionsView {
+		return m.actionsFocusDivider(color.Color(m.ctx.Theme.FaintBorder), focus)
+	}
+
 	line := strings.Repeat("━", max(0, m.ctx.ScreenWidth))
 	if !m.ctx.SidebarOpen || m.ctx.PreviewPosition == "bottom" {
 		color := primary
@@ -171,6 +177,70 @@ func (m Model) focusDivider() string {
 		lipgloss.NewStyle().Foreground(mainColor).Render(strings.Repeat("━", mainWidth)),
 		lipgloss.NewStyle().Foreground(previewColor).Render(strings.Repeat("━", previewWidth)),
 	)
+}
+
+func (m Model) actionsFocusDivider(primary, focus color.Color) string {
+	cursor := m.carousel.Cursor()
+	if cursor < 0 || cursor >= len(m.sectionTabs) {
+		return lipgloss.NewStyle().Foreground(primary).Render(strings.Repeat("━", max(0, m.ctx.ScreenWidth)))
+	}
+
+	as, ok := m.sectionTabs[cursor].section.(*actionssection.Model)
+	if !ok || as == nil {
+		return lipgloss.NewStyle().Foreground(primary).Render(strings.Repeat("━", max(0, m.ctx.ScreenWidth)))
+	}
+
+	workflowsWidth, runsWidth, detailsWidth := actionsDividerWidths(m.ctx.ScreenWidth)
+	workflowsColor := primary
+	runsColor := primary
+	detailsColor := primary
+	switch as.FocusedPane() {
+	case actionssection.PaneWorkflows:
+		workflowsColor = focus
+	case actionssection.PaneRuns:
+		runsColor = focus
+	case actionssection.PaneDetails:
+		detailsColor = focus
+	}
+
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		lipgloss.NewStyle().Foreground(workflowsColor).Render(strings.Repeat("━", workflowsWidth)),
+		lipgloss.NewStyle().Foreground(runsColor).Render(strings.Repeat("━", runsWidth)),
+		lipgloss.NewStyle().Foreground(detailsColor).Render(strings.Repeat("━", detailsWidth)),
+	)
+}
+
+func actionsDividerWidths(total int) (workflows, runs, details int) {
+	if total <= 0 {
+		return 0, 0, 0
+	}
+	const (
+		minWorkflows = 20
+		minRuns      = 20
+		minDetails   = 30
+	)
+
+	workflows = total * 22 / 100
+	runs = total * 22 / 100
+	if workflows < minWorkflows {
+		workflows = minWorkflows
+	}
+	if runs < minRuns {
+		runs = minRuns
+	}
+
+	details = max(0, total-workflows-runs)
+	if details < minDetails {
+		short := minDetails - details
+		fromW := min(short/2+short%2, max(0, workflows-minWorkflows))
+		workflows -= fromW
+		short -= fromW
+		fromR := min(short, max(0, runs-minRuns))
+		runs -= fromR
+		details = max(0, total-workflows-runs)
+	}
+	return workflows, runs, details
 }
 
 type latestVersionMsg struct {

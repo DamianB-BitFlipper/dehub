@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -80,6 +81,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) View(ctx *context.ProgramContext) string {
+	return m.view(ctx, m.ctx.Styles.Colors.OpenIssue)
+}
+
+func (m Model) ViewWithFocusedBorder(ctx *context.ProgramContext, focusedBorder color.Color) string {
+	return m.view(ctx, focusedBorder)
+}
+
+func (m Model) view(ctx *context.ProgramContext, focusedBorder color.Color) string {
 	s := m.ctx.Styles.Search.Root
 	if cmp := m.ViewCompletions(); cmp != "" {
 		b := lipgloss.RoundedBorder()
@@ -88,7 +97,7 @@ func (m Model) View(ctx *context.ProgramContext) string {
 		s = s.Border(b, true)
 	}
 	if m.cmpctl.Focused() {
-		s = s.BorderForeground(m.ctx.Styles.Colors.OpenIssue)
+		s = s.BorderForeground(focusedBorder)
 	}
 	return s.Render(m.cmpctl.View())
 }

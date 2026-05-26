@@ -72,6 +72,20 @@ type model struct {
 	lastFetched       time.Time
 	checksFetched     bool
 	embedded          bool
+	// checkMemory remembers the last step selection and log offset for
+	// each check/job the user has visited in this actionview instance,
+	// keyed by jobItem.job.Id. It is populated only when the user has
+	// actually interacted with the check (step nav or log scroll),
+	// not on first visit, so first-visit defaults (goToErrorInLogs)
+	// remain intact. Lifetime: same as the model (session).
+	checkMemory map[string]checkMemoryEntry
+}
+
+// checkMemoryEntry holds the per-check UI state restored on revisit.
+// A negative value means "no remembered value, use default".
+type checkMemoryEntry struct {
+	stepIndex int
+	logOffset int
 }
 
 type Model = model
@@ -157,6 +171,10 @@ func NewModel(repo string, number string, opts ModelOpts) Model {
 	focusedPane := PaneRuns
 	if opts.Flat {
 		focusedPane = PaneChecks
+	} else if opts.RunID != "" {
+		// In run mode the embedded Runs pane is hidden (the parent UI
+		// already shows the runs list), so start focus on Jobs.
+		focusedPane = PaneJobs
 	}
 
 	m := model{
@@ -180,6 +198,7 @@ func NewModel(repo string, number string, opts ModelOpts) Model {
 		embedded:          opts.Embedded,
 		focusedPane:       focusedPane,
 		lastFetched:       time.Now(),
+		checkMemory:       map[string]checkMemoryEntry{},
 	}
 	m.setFocusedPaneStyles()
 	return m
@@ -199,9 +218,15 @@ func (m Model) UpdateEmbedded(msg tea.Msg) (Model, tea.Cmd) {
 		if key.Matches(keyMsg, quitKey) {
 			return m, nil
 		}
-		// Only route keys to the embedded view while logs search is focused;
-		// otherwise the parent handles them.
-		if !m.logsInput.Focused() {
+		// Forward keys when either the logs search input has focus (it
+		// captures arbitrary typing) or the key matches an
+		// actionview-local binding. Every other key is left for the
+		// parent TUI to handle (universal navigation, view switching,
+		// section keybindings, etc.). IsLocalKey is the single source of
+		// truth for "what is an actionview key" so the equivalent
+		// dispatch in the dashboard's Actions view (ui.go) and here stay
+		// in sync without duplicated key lists.
+		if !m.logsInput.Focused() && !IsLocalKey(keyMsg) {
 			return m, nil
 		}
 	}
@@ -271,6 +296,10 @@ func (m *Model) selectCheck(delta int) (bool, tea.Cmd) {
 		return false, nil
 	}
 
+	// Snapshot the outgoing check's step selection and log offset
+	// before the cursor moves so we can restore on revisit.
+	m.rememberCurrentCheck()
+
 	if delta < 0 {
 		m.checksList.CursorUp()
 	} else {
@@ -293,6 +322,31 @@ func (m *Model) SelectPrevStep() (bool, tea.Cmd) {
 
 func (m *Model) SelectNextStep() (bool, tea.Cmd) {
 	return m.selectStep(1)
+}
+
+// ScrollLogsUp scrolls the Job Logs viewport up by a half page. It returns
+// (moved, cmd) where moved reports whether the viewport actually moved
+// (false when there is no log content or when already at the top). The cmd
+// is currently always nil; the signature mirrors the other public
+// navigation methods for forward compatibility.
+func (m *Model) ScrollLogsUp() (bool, tea.Cmd) {
+	if m.logsViewport.GetContent() == "" {
+		return false, nil
+	}
+	before := m.logsViewport.YOffset()
+	m.logsViewport.HalfPageUp()
+	return before != m.logsViewport.YOffset(), nil
+}
+
+// ScrollLogsDown scrolls the Job Logs viewport down by a half page. See
+// ScrollLogsUp for the contract.
+func (m *Model) ScrollLogsDown() (bool, tea.Cmd) {
+	if m.logsViewport.GetContent() == "" {
+		return false, nil
+	}
+	before := m.logsViewport.YOffset()
+	m.logsViewport.HalfPageDown()
+	return before != m.logsViewport.YOffset(), nil
 }
 
 func (m *Model) selectStep(delta int) (bool, tea.Cmd) {
@@ -473,6 +527,11 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case checkStepsFetchedMsg:
 		m.enrichCheckWithSteps(msg)
 		cmds = append(cmds, m.updateLists()...)
+		// Steps just became available for a check; if those steps
+		// belong to the currently-selected check and we have a
+		// remembered step index, reapply it (updateLists may have
+		// repopulated the steps list).
+		m.restoreCheckMemory()
 
 	case jobLogsFetchedMsg:
 		ji := m.getJobItemById(msg.jobId)
@@ -485,6 +544,11 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if currJob != nil && currJob.job.Id == msg.jobId {
 				cmds = append(cmds, m.renderJobLogs())
 				m.goToErrorInLogs()
+				// Logs just became available for the currently-selected
+				// job; if the user had previously visited this check,
+				// reapply their remembered offset over the default
+				// goToErrorInLogs position.
+				m.restoreCheckMemory()
 			}
 
 			cmds = append(cmds, m.updateLists()...)
@@ -580,17 +644,22 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		if key.Matches(msg, modeKey) {
-			m.flat = !m.flat
-			if m.flat {
-				m.focusedPane = PaneChecks
-			} else {
-				m.focusedPane = PaneRuns
-			}
-			cmds = append(cmds, m.onWorkflowRunsFetched()...)
-			if m.flat {
-				cmds = append(cmds, m.onCheckChanged()...)
-			} else {
-				cmds = append(cmds, m.onRunChanged()...)
+			// In run mode there is no PR context, so flat/hierarchical
+			// toggling is meaningless (there are no checks). Ignore the
+			// keybinding to avoid leaving focus on a hidden pane.
+			if !m.inRunMode() {
+				m.flat = !m.flat
+				if m.flat {
+					m.focusedPane = PaneChecks
+				} else {
+					m.focusedPane = PaneRuns
+				}
+				cmds = append(cmds, m.onWorkflowRunsFetched()...)
+				if m.flat {
+					cmds = append(cmds, m.onCheckChanged()...)
+				} else {
+					cmds = append(cmds, m.onRunChanged()...)
+				}
 			}
 		}
 
@@ -658,6 +727,37 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.focusedPane = m.previousPane()
 			m.zoomedPane = nil
 			m.setFocusedPaneStyles()
+		}
+
+		// Step navigation shortcuts: `,` previous, `.` next. Available
+		// regardless of which pane currently has focus so the user can
+		// cycle through steps while reading the logs. selectStep is a
+		// no-op when no steps are loaded, and the early-return guards
+		// above ensure these keys aren't intercepted while a list filter
+		// or the logs search input is being typed into.
+		if key.Matches(msg, prevStepKey) {
+			if _, stepCmd := (&m).selectStep(-1); stepCmd != nil {
+				cmds = append(cmds, stepCmd)
+			}
+		}
+		if key.Matches(msg, nextStepKey) {
+			if _, stepCmd := (&m).selectStep(1); stepCmd != nil {
+				cmds = append(cmds, stepCmd)
+			}
+		}
+
+		// Log scroll shortcuts: ctrl+, scrolls the Job Logs viewport up
+		// by a half page, ctrl+. scrolls it down. Available regardless
+		// of which pane currently has focus, mirroring the step keys.
+		if key.Matches(msg, scrollLogsUpKey) {
+			if _, scrollCmd := (&m).ScrollLogsUp(); scrollCmd != nil {
+				cmds = append(cmds, scrollCmd)
+			}
+		}
+		if key.Matches(msg, scrollLogsDownKey) {
+			if _, scrollCmd := (&m).ScrollLogsDown(); scrollCmd != nil {
+				cmds = append(cmds, scrollCmd)
+			}
 		}
 
 	case spinner.TickMsg:
@@ -738,6 +838,9 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch m.focusedPane {
 	case PaneChecks:
 		before := m.getSelectedCheckItem()
+		// Snapshot outgoing check state before list.Update may move the
+		// cursor. rememberCurrentCheck is a no-op if nothing changes.
+		m.rememberCurrentCheck()
 		m.checksList, cmd = m.checksList.Update(msg)
 		cmds = append(cmds, cmd)
 		after := m.getSelectedCheckItem()
@@ -757,6 +860,9 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	case PaneJobs:
 		before := m.jobsList.GlobalIndex()
+		// Snapshot outgoing job state before list.Update may move the
+		// cursor.
+		m.rememberCurrentCheck()
 		m.jobsList, cmd = m.jobsList.Update(msg)
 		cmds = append(cmds, cmd)
 		after := m.jobsList.GlobalIndex()
@@ -826,7 +932,10 @@ func (m Model) EmbeddedView() string {
 }
 
 func (m *model) viewHierarchicalChecks() string {
-	runsPane := makePointingBorder(m.paneStyle(PaneRuns).Render(m.runsList.View()))
+	runsPane := ""
+	if !m.inRunMode() {
+		runsPane = makePointingBorder(m.paneStyle(PaneRuns).Render(m.runsList.View()))
+	}
 	jobsPane := makePointingBorder(m.paneStyle(PaneJobs).Render(m.jobsList.View()))
 	stepsPane := ""
 	if m.shouldShowSteps() {
@@ -837,7 +946,9 @@ func (m *model) viewHierarchicalChecks() string {
 	if m.zoomedPane != nil {
 		switch *m.zoomedPane {
 		case PaneRuns:
-			panes = append(panes, runsPane)
+			if !m.inRunMode() {
+				panes = append(panes, runsPane)
+			}
 		case PaneJobs:
 			panes = append(panes, jobsPane)
 		case PaneSteps:
@@ -846,7 +957,9 @@ func (m *model) viewHierarchicalChecks() string {
 			panes = append(panes, m.viewLogs())
 		}
 	} else {
-		panes = append(panes, runsPane)
+		if !m.inRunMode() {
+			panes = append(panes, runsPane)
+		}
 		panes = append(panes, jobsPane)
 		panes = append(panes, stepsPane)
 		panes = append(panes, m.viewLogs())
@@ -893,6 +1006,14 @@ func (m *model) viewFlatChecks() string {
 		lipgloss.Top,
 		panes...,
 	)
+}
+
+// inRunMode reports whether this actionview was launched against a single
+// workflow run (as opposed to a PR context). In run mode the parent UI
+// already shows the Runs list, so the embedded Runs pane is suppressed to
+// avoid redundancy.
+func (m *model) inRunMode() bool {
+	return m.runID != ""
 }
 
 func (m *model) isRunModeInProgress() bool {
@@ -964,39 +1085,50 @@ func (m *model) viewLogs() string {
 }
 
 func (m *model) setFocusedPaneStyles() {
-	// Keep checks and steps delegates always "focused" so their selected
-	// item is rendered with the blue background highlight regardless of
-	// which pane currently has focus. Pane focus is conveyed by the pane
-	// title pill color.
-	m.checksDelegate.(*checksDelegate).focused = true
-	m.stepsDelegate.(*stepsDelegate).focused = true
+	checks := m.checksDelegate.(*checksDelegate)
+	steps := m.stepsDelegate.(*stepsDelegate)
+	runs := m.runsDelegate.(*runsDelegate)
+	jobs := m.jobsDelegate.(*jobsDelegate)
+
+	// paneFocused tracks literal keyboard focus, symmetrically across all
+	// panes. It is the honest "is this pane focused" signal.
+	checks.paneFocused = m.focusedPane == PaneChecks
+	runs.paneFocused = m.focusedPane == PaneRuns
+	jobs.paneFocused = m.focusedPane == PaneJobs
+	steps.paneFocused = m.focusedPane == PaneSteps
+
+	// prominentSelection is a per-pane UX policy, separate from focus:
+	//   - Checks, Jobs and Steps keep their selection prominent even when
+	//     blurred, because each one's selection is "the cursor that drives
+	//     the logs being read" (Checks in flat mode; Jobs in hierarchical
+	//     mode; Steps in both). Pane focus is still conveyed by the
+	//     title-pill color and by the Runs pane's selection dimming below.
+	//   - Runs follows the conventional "selection dims when blurred"
+	//     pattern, so the topmost navigator still gives a clear focus cue
+	//     as the user drills rightward.
+	checks.prominentSelection = true
+	steps.prominentSelection = true
+	jobs.prominentSelection = true
+	runs.prominentSelection = runs.paneFocused
 
 	switch m.focusedPane {
 	case PaneChecks:
 		m.setListFocusedStyles(&m.checksList, &m.checksDelegate, PaneChecks)
 		m.setListUnfocusedStyles(&m.stepsList, &m.stepsDelegate)
 	case PaneRuns:
-		m.runsDelegate.(*runsDelegate).focused = true
-		m.jobsDelegate.(*jobsDelegate).focused = false
 		m.setListFocusedStyles(&m.runsList, &m.runsDelegate, PaneRuns)
 		m.setListUnfocusedStyles(&m.jobsList, &m.jobsDelegate)
 		m.setListUnfocusedStyles(&m.stepsList, &m.stepsDelegate)
 	case PaneJobs:
-		m.runsDelegate.(*runsDelegate).focused = false
-		m.jobsDelegate.(*jobsDelegate).focused = true
 		m.setListUnfocusedStyles(&m.runsList, &m.runsDelegate)
 		m.setListFocusedStyles(&m.jobsList, &m.jobsDelegate, PaneJobs)
 		m.setListUnfocusedStyles(&m.stepsList, &m.stepsDelegate)
 	case PaneSteps:
-		m.runsDelegate.(*runsDelegate).focused = false
-		m.jobsDelegate.(*jobsDelegate).focused = false
 		m.setListUnfocusedStyles(&m.checksList, &m.checksDelegate)
 		m.setListUnfocusedStyles(&m.runsList, &m.runsDelegate)
 		m.setListUnfocusedStyles(&m.jobsList, &m.jobsDelegate)
 		m.setListFocusedStyles(&m.stepsList, &m.stepsDelegate, PaneSteps)
 	case PaneLogs:
-		m.runsDelegate.(*runsDelegate).focused = false
-		m.jobsDelegate.(*jobsDelegate).focused = false
 		m.setListUnfocusedStyles(&m.checksList, &m.checksDelegate)
 		m.setListUnfocusedStyles(&m.runsList, &m.runsDelegate)
 		m.setListUnfocusedStyles(&m.jobsList, &m.jobsDelegate)
@@ -1278,8 +1410,15 @@ func (m *model) logsWidth() int {
 		return m.width - 1
 	}
 
+	// Borders counts the rendered pane borders that take up horizontal
+	// space alongside the logs viewport. Each visible side pane contributes
+	// one border. In flat mode that is just the Checks pane; in
+	// hierarchical mode it is Runs + Jobs, dropping to just Jobs in run
+	// mode where Runs is suppressed.
 	var borders int
 	if m.flat {
+		borders = 1
+	} else if m.inRunMode() {
 		borders = 1
 	} else {
 		borders = 2
@@ -1294,6 +1433,8 @@ func (m *model) logsWidth() int {
 	w := m.width - steps - borders
 	if m.flat {
 		w -= m.checksList.Width()
+	} else if m.inRunMode() {
+		w -= m.jobsList.Width()
 	} else {
 		w -= m.runsList.Width() + m.jobsList.Width()
 	}
@@ -1466,6 +1607,12 @@ func (m *model) onJobChanged() []tea.Cmd {
 
 	cmds = append(cmds, m.renderJobLogs())
 	m.goToErrorInLogs()
+
+	// If we've visited this check/job before, restore the user's last
+	// step selection and log offset, overriding the goToErrorInLogs
+	// default above. When logs haven't been fetched yet the log offset
+	// portion is a no-op here; jobLogsFetchedMsg reapplies on arrival.
+	m.restoreCheckMemory()
 
 	return cmds
 }
@@ -1754,16 +1901,21 @@ func (m *model) paneWidth() int {
 }
 
 // visibleSidePaneCount returns the number of side panes that are currently
-// rendered alongside the logs pane (varies by flat vs hierarchical mode and
-// whether the steps pane is shown).
+// rendered alongside the logs pane (varies by flat vs hierarchical mode,
+// whether the steps pane is shown, and whether we are in run mode where the
+// Runs pane is suppressed).
 func (m *model) visibleSidePaneCount() int {
 	if m.flat {
 		return 1 // checksList only
 	}
-	if m.shouldShowSteps() {
-		return 3 // runs, jobs, steps
+	count := 2 // runs + jobs
+	if m.inRunMode() {
+		count = 1 // jobs only (runs is suppressed)
 	}
-	return 2 // runs, jobs
+	if m.shouldShowSteps() {
+		count++
+	}
+	return count
 }
 
 func (m *model) goToErrorInLogs() {
@@ -1987,6 +2139,65 @@ func (m *model) resetStepsState() {
 	m.logsInput.Reset()
 	m.stepsList.ResetSelected()
 	m.stepsList.ResetFilter()
+}
+
+// rememberCurrentCheck snapshots the currently-selected check's step
+// selection and log offset into checkMemory, keyed by the selected job's
+// ID. Callers should invoke this BEFORE moving the check/job cursor so
+// that m.stepsList and m.logsViewport still reflect the outgoing check.
+// Safe to call when nothing is selected (no-op).
+func (m *model) rememberCurrentCheck() {
+	ji := m.getSelectedJobItem()
+	if ji == nil || ji.job.Id == "" {
+		return
+	}
+	if m.checkMemory == nil {
+		m.checkMemory = map[string]checkMemoryEntry{}
+	}
+	entry := checkMemoryEntry{stepIndex: -1, logOffset: -1}
+	if len(m.stepsList.Items()) > 0 {
+		entry.stepIndex = m.stepsList.GlobalIndex()
+	}
+	if m.logsViewport.GetContent() != "" {
+		entry.logOffset = m.logsViewport.YOffset()
+	}
+	// If neither was capturable there is nothing useful to remember;
+	// leaving the map untouched means the next visit will use the
+	// usual goToErrorInLogs default.
+	if entry.stepIndex < 0 && entry.logOffset < 0 {
+		return
+	}
+	m.checkMemory[ji.job.Id] = entry
+}
+
+// restoreCheckMemory applies any saved step selection and log offset for
+// the currently-selected check. It is a no-op if there is no memory for
+// this check, or if the relevant content (steps list / log viewport) is
+// not yet populated; in the latter case the async fetched-message hooks
+// reapply once content arrives. Returns true if anything was applied.
+func (m *model) restoreCheckMemory() bool {
+	ji := m.getSelectedJobItem()
+	if ji == nil || ji.job.Id == "" {
+		return false
+	}
+	entry, ok := m.checkMemory[ji.job.Id]
+	if !ok {
+		return false
+	}
+
+	applied := false
+	if entry.stepIndex >= 0 && entry.stepIndex < len(m.stepsList.Items()) {
+		m.stepsList.Select(entry.stepIndex)
+		applied = true
+	}
+	// Only set the log offset once there is content; on an empty
+	// viewport SetYOffset would clamp to 0 and the offset would be
+	// lost. The jobLogsFetchedMsg handler reapplies after fetch.
+	if entry.logOffset >= 0 && m.logsViewport.GetContent() != "" {
+		m.logsViewport.SetYOffset(entry.logOffset)
+		applied = true
+	}
+	return applied
 }
 
 func (m *model) tickSteps() []tea.Cmd {

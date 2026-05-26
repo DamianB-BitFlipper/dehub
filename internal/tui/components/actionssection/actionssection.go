@@ -99,12 +99,6 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 		switch {
-		case msg.String() == ".":
-			m.NextRun()
-			return m, nil
-		case msg.String() == ",":
-			m.PrevRun()
-			return m, nil
 		case key.Matches(msg, keys.ActionsKeys.ToggleSmartFiltering):
 			if m.HasCurrentRepoNameInConfiguredFilter() || !m.HasRepoNameInConfiguredFilter() {
 				m.IsFilteredByCurrentRemote = !m.IsFilteredByCurrentRemote

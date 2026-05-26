@@ -160,20 +160,28 @@ func PRFullHelp() []key.Binding {
 		previewBindings = append(
 			previewBindings,
 			key.NewBinding(
+				key.WithKeys(Keys.Up.Keys()...),
+				key.WithHelp(Keys.Up.Help().Key, "previous check"),
+			),
+			key.NewBinding(
+				key.WithKeys(Keys.Down.Keys()...),
+				key.WithHelp(Keys.Down.Help().Key, "next check"),
+			),
+			key.NewBinding(
 				key.WithKeys(PRKeys.PrevReviewThread.Keys()...),
-				key.WithHelp(PRKeys.PrevReviewThread.Help().Key, "previous check"),
+				key.WithHelp(PRKeys.PrevReviewThread.Help().Key, "previous step"),
 			),
 			key.NewBinding(
 				key.WithKeys(PRKeys.NextReviewThread.Keys()...),
-				key.WithHelp(PRKeys.NextReviewThread.Help().Key, "next check"),
+				key.WithHelp(PRKeys.NextReviewThread.Help().Key, "next step"),
 			),
 			key.NewBinding(
 				key.WithKeys(PRKeys.PrevStep.Keys()...),
-				key.WithHelp(PRKeys.PrevStep.Help().Key, "previous step"),
+				key.WithHelp(PRKeys.PrevStep.Help().Key, "scroll logs up"),
 			),
 			key.NewBinding(
 				key.WithKeys(PRKeys.NextStep.Keys()...),
-				key.WithHelp(PRKeys.NextStep.Help().Key, "next step"),
+				key.WithHelp(PRKeys.NextStep.Help().Key, "scroll logs down"),
 			),
 		)
 	}

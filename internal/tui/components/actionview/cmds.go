@@ -875,6 +875,10 @@ func (m *model) previousPane() pane {
 		return PaneRuns
 
 	case PaneJobs:
+		if m.inRunMode() {
+			// Runs pane is hidden in run mode; Jobs is the leftmost pane.
+			return PaneJobs
+		}
 		return PaneRuns
 
 	case PaneSteps:
@@ -895,6 +899,9 @@ func (m *model) previousPane() pane {
 
 	if m.flat {
 		return PaneChecks
+	}
+	if m.inRunMode() {
+		return PaneJobs
 	}
 	return PaneRuns
 }

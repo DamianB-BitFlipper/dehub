@@ -9,9 +9,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	data "github.com/dlvhdr/gh-dash/v4/internal/data/actions"
 	api "github.com/dlvhdr/gh-dash/v4/internal/data/actionsapi"
@@ -39,11 +37,7 @@ type jobItem struct {
 
 // Title implements charm.land/bubbles.list.DefaultItem.Title
 func (i *jobItem) Title() string {
-	status := i.viewStatus()
-	s := i.meta.TitleStyle()
-	w := i.meta.width - lipgloss.Width(status) - 2
-	return lipgloss.JoinHorizontal(lipgloss.Top, s.Render(status), s.Render(" "),
-		s.Width(w).Render(ansi.Truncate(s.Render(i.job.Name), w, Ellipsis)))
+	return i.meta.renderTitleWithStatus(i.viewStatus(), i.job.Name)
 }
 
 // Description implements charm.land/bubbles.list.DefaultItem.Description
@@ -87,7 +81,12 @@ type jobsDelegate struct {
 }
 
 func newJobItemDelegate(styles styles) list.ItemDelegate {
-	d := jobsDelegate{commonDelegate{styles: styles, focused: true}}
+	// The Jobs pane intentionally keeps its selection rendered prominently
+	// even when blurred: its selection is the cursor that drives the Steps
+	// and Job Logs panes, mirroring how Checks behaves in flat mode. The
+	// final value is (re)applied by setFocusedPaneStyles. See itemMeta for
+	// the full rationale.
+	d := jobsDelegate{commonDelegate{styles: styles, prominentSelection: true}}
 	return &d
 }
 

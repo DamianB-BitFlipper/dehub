@@ -245,6 +245,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mergePRPopup != nil {
 			return m, m.updateMergePRPopup(msg)
 		}
+		if m.ctx.View == config.ActionsView && currSection != nil {
+			if as, ok := currSection.(*actionssection.Model); ok && as != nil {
+				if key.Matches(msg, keys.ActionsKeys.FocusNextPane) || key.Matches(msg, keys.ActionsKeys.FocusPrevPane) {
+					cmds := []tea.Cmd{
+						currSection.SetIsSearching(false),
+						currSection.SetIsLocalSearching(false),
+					}
+					if key.Matches(msg, keys.ActionsKeys.FocusNextPane) {
+						as.FocusNextPane()
+					} else {
+						as.FocusPrevPane()
+					}
+					cmds = append(cmds, m.onViewedRowChanged())
+					return m, tea.Batch(cmds...)
+				}
+			}
+		}
 
 		if currSection != nil && (currSection.IsSearchFocused() || currSection.IsLocalSearchFocused() ||
 			currSection.IsPromptConfirmationFocused()) {
@@ -292,6 +309,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncMainContentDimensions()
 			return m, nil
 		}
+		if m.ctx.View == config.ActionsView {
+			if handled, navCmd := m.handleActionsNavigation(msg, currSection); handled {
+				return m, navCmd
+			}
+		}
 
 		// Handle notification PR/Issue action confirmation
 		if m.notificationView.HasPendingAction() {
@@ -305,11 +327,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch {
-		case key.Matches(msg, m.keys.FocusMain):
+		// In the Actions view, ctrl+left/ctrl+right are reserved for
+		// switching between the Workflows / Runs / Details panes (handled
+		// further below). Skip the global FocusMain/FocusPreview handlers
+		// there so the Actions-specific switch can receive the key.
+		case key.Matches(msg, m.keys.FocusMain) && m.ctx.View != config.ActionsView:
 			m.setActivePane(mainPane)
 			return m, nil
 
-		case key.Matches(msg, m.keys.FocusPreview):
+		case key.Matches(msg, m.keys.FocusPreview) && m.ctx.View != config.ActionsView:
 			if m.sidebar.IsOpen {
 				m.setActivePane(previewPane)
 			} else {
@@ -358,6 +384,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				cmd = m.onViewedRowChanged()
 			}
+
+		// On the PR Checks tab, forward any actionview-local key (step
+		// nav, log scroll, pane switching, log search, etc.) to the
+		// embedded actionview. actionview.IsLocalKey is the single
+		// source of truth for the key set, shared with the dashboard's
+		// Actions view forwarding below; feature additions only need to
+		// touch actionview/keys.go. PgUp/PgDn (ctrl+up/ctrl+down) are
+		// matched earlier and keep their outer-sidebar half-page scroll.
+		case m.isPreviewFocused() && m.prView.IsChecksTab() && actionview.IsLocalKey(msg):
+			m.prView, cmd = m.prView.Update(msg)
+			m.syncSidebar()
+			return m, cmd
 
 		case m.isPreviewFocused() && m.isPreviewNavigationKey(msg):
 			m.sidebar, sidebarCmd = m.sidebar.Update(msg)
@@ -570,35 +608,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncSidebar()
 				return m, nil
 
-			case m.prView.IsChecksTab() && (key.Matches(msg, keys.PRKeys.PrevReviewThread) ||
-				key.Matches(msg, keys.PRKeys.NextReviewThread)):
-				var moved bool
-				var prCmd tea.Cmd
-				if key.Matches(msg, keys.PRKeys.PrevReviewThread) {
-					moved, prCmd = m.prView.FocusPrevCheck()
-				} else {
-					moved, prCmd = m.prView.FocusNextCheck()
-				}
-				if !moved {
-					return m, nil
-				}
-				m.syncSidebar()
-				return m, tea.Batch(prCmd)
-
-			case m.prView.IsChecksTab() && (key.Matches(msg, keys.PRKeys.PrevStep) ||
-				key.Matches(msg, keys.PRKeys.NextStep)):
-				var moved bool
-				var prCmd tea.Cmd
-				if key.Matches(msg, keys.PRKeys.PrevStep) {
-					moved, prCmd = m.prView.FocusPrevStep()
-				} else {
-					moved, prCmd = m.prView.FocusNextStep()
-				}
-				if !moved {
-					return m, nil
-				}
-				m.syncSidebar()
-				return m, tea.Batch(prCmd)
+			// PR Checks tab: , / . (step nav), ctrl+, / ctrl+. (log
+			// scroll), up/down (current pane navigation), and every
+			// other actionview-local key are forwarded to the embedded
+			// actionview by the IsLocalKey case earlier in the outer
+			// switch. Nothing to do here.
 
 			case key.Matches(msg, keys.PRKeys.ToggleReviewThread):
 				if !m.prView.IsActivityTab() {
@@ -722,18 +736,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.switchSelectedView())
 			}
 		case m.ctx.View == config.ActionsView:
+			// Debug: trace key routing in the Actions view so we can verify
+			// pane-switch keys (ctrl+left/ctrl+right) actually reach this
+			// case. Captured in debug.log when the app is run with --debug.
+			if as, ok := currSection.(*actionssection.Model); ok && as != nil {
+				log.Debug("actions view key",
+					"key", msg.String(),
+					"focusedPane", as.FocusedPane(),
+					"matchesNext", key.Matches(msg, keys.ActionsKeys.FocusNextPane),
+					"matchesPrev", key.Matches(msg, keys.ActionsKeys.FocusPrevPane),
+				)
+			} else {
+				log.Debug("actions view key (no section)", "key", msg.String())
+			}
 			// Route navigation keys to the focused pane before the universal
 			// Up/Down/PgUp/PgDn handlers (which assume single-table sections).
 			if handled, navCmd := m.handleActionsNavigation(msg, currSection); handled {
 				return m, navCmd
 			}
 			// When the details pane has focus, forward actionview-local
-			// keys (pane switching, log search, zoom) directly to the
-			// embedded view.
+			// keys (step nav, log scroll, pane switching, log search,
+			// zoom, etc.) directly to the embedded view. actionview
+			// owns the canonical key set via IsLocalKey; the equivalent
+			// dispatch on the PR Checks tab uses the same predicate.
 			if as, ok := currSection.(*actionssection.Model); ok && as != nil &&
 				as.FocusedPane() == actionssection.PaneDetails &&
 				m.actionRunView != nil &&
-				isActionsDetailsLocalKey(msg) {
+				actionview.IsLocalKey(msg) {
 				view, actionCmd := m.actionRunView.Update(msg)
 				m.actionRunView = &view
 				return m, actionCmd
@@ -742,11 +771,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keys.OpenGithub):
 				cmds = append(cmds, m.openBrowser())
 			case key.Matches(msg, keys.ActionsKeys.FocusNextPane):
+				log.Debug("actions: FocusNextPane fired")
 				if as, ok := currSection.(*actionssection.Model); ok && as != nil {
 					as.FocusNextPane()
 					return m, m.onViewedRowChanged()
 				}
 			case key.Matches(msg, keys.ActionsKeys.FocusPrevPane):
+				log.Debug("actions: FocusPrevPane fired")
 				if as, ok := currSection.(*actionssection.Model); ok && as != nil {
 					as.FocusPrevPane()
 					return m, m.onViewedRowChanged()
@@ -778,6 +809,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// PR keybindings when viewing a PR notification
 			case m.notificationView.GetSubjectPR() != nil:
+				// On the PR Checks tab, forward any actionview-local
+				// key directly to the embedded actionview, bypassing the
+				// PRAction mapping. This is the same dispatch the main
+				// preview path uses; see actionview.IsLocalKey for the
+				// canonical key set.
+				if !m.prView.IsTextInputBoxFocused() &&
+					m.prView.IsChecksTab() && actionview.IsLocalKey(msg) {
+					m.prView, cmd = m.prView.Update(msg)
+					m.syncSidebar()
+					return m, cmd
+				}
 				// Check for PR actions first (before updating prView)
 				if !m.prView.IsTextInputBoxFocused() {
 					action := prview.MsgToAction(msg)
@@ -857,21 +899,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, m.prView.ToggleFocusedReviewThreadResolved()
 
 						case prview.PRActionPrevReviewThread, prview.PRActionNextReviewThread:
+							// On the Checks tab, , / . are forwarded to
+							// the embedded actionview by the IsLocalKey
+							// short-circuit at the top of this case; this
+							// arm only handles the Activity-tab review-
+							// thread navigation. Other tabs are a no-op.
 							if !m.prView.IsActivityTab() {
-								if m.prView.IsChecksTab() {
-									var moved bool
-									var prCmd tea.Cmd
-									if action.Type == prview.PRActionPrevReviewThread {
-										moved, prCmd = m.prView.FocusPrevCheck()
-									} else {
-										moved, prCmd = m.prView.FocusNextCheck()
-									}
-									if !moved {
-										return m, nil
-									}
-									m.syncSidebar()
-									cmds = append(cmds, prCmd)
-								}
 								return m, tea.Batch(cmds...)
 							}
 							moved := false
@@ -887,22 +920,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 
 						case prview.PRActionPrevStep, prview.PRActionNextStep:
-							if !m.prView.IsChecksTab() {
-								return m, nil
-							}
-							var moved bool
-							var prCmd tea.Cmd
-							if action.Type == prview.PRActionPrevStep {
-								moved, prCmd = m.prView.FocusPrevStep()
-							} else {
-								moved, prCmd = m.prView.FocusNextStep()
-							}
-							if !moved {
-								return m, nil
-							}
-							m.syncSidebar()
-							cmds = append(cmds, prCmd)
-							return m, tea.Batch(cmds...)
+							// ctrl+, / ctrl+. are forwarded to the
+							// embedded actionview by the IsLocalKey
+							// short-circuit at the top of this case
+							// (Checks tab). On other tabs, a no-op.
+							return m, nil
 						}
 					}
 				}
@@ -1522,20 +1544,7 @@ func (m *Model) renderActionsThreePane(section *actionssection.Model) string {
 	width := max(0, m.ctx.ScreenWidth)
 	totalHeight := max(0, m.getBaseContentHeight())
 
-	// Render the section's search / local-search bar above the three panes
-	// when active, mirroring section.BaseModel.View().
-	searchBarView := ""
-	if section.IsLocalSearching || section.LocalSearchValue != "" {
-		searchBarView = section.LocalSearchBar.View(m.ctx)
-	} else if section.IsSearching || section.IsSearchFocused() {
-		searchBarView = section.SearchBar.View(m.ctx)
-	}
-	searchBarHeight := 0
-	if searchBarView != "" {
-		searchBarHeight = lipgloss.Height(searchBarView)
-	}
-
-	height := max(0, totalHeight-searchBarHeight)
+	height := totalHeight
 
 	// Column width distribution:
 	//   - Workflows and Runs take a left strip (~22% each).
@@ -1544,16 +1553,50 @@ func (m *Model) renderActionsThreePane(section *actionssection.Model) string {
 	// Minimums clamp each pane on narrow terminals.
 	firstWidth, secondWidth, thirdWidth := actionsPaneWidths(width)
 
-	// The outer column header is 1 line. The inner Table.View() renders its
-	// own 2-line header (common.TableHeaderHeight). Reserve 3 lines so the
-	// last data row isn't clipped by the bounding Height set on colStyle.
+	// Pane layout reserves vertical space for:
+	//   - a 1-line outer column header ("Workflows" / "Runs" / "Details"),
+	//   - the inner Table.View() which renders its own 2-line header
+	//     (common.TableHeaderHeight) for the workflow/runs panes.
+	// The details pane has no inner table header, so its body uses more
+	// of the available height (see headerHeight passed below).
 	const outerHeaderHeight = 1
 	const innerTableHeaderHeight = 2
 	const headerHeight = outerHeaderHeight + innerTableHeaderHeight
-	bodyHeight := max(0, height-headerHeight)
+	focusedPane := section.FocusedPane()
+	searchView := func(w int) string {
+		if focusedPane != actionssection.PaneWorkflows && focusedPane != actionssection.PaneRuns {
+			return ""
+		}
 
-	section.SetWorkflowTableDimensions(firstWidth, bodyHeight)
-	section.SetRunTableDimensions(secondWidth, bodyHeight)
+		ctx := *m.ctx
+		ctx.MainContentWidth = w
+		// Only render the search bar while the search input is actively
+		// focused. Persistent local-search values still filter rows but the
+		// box itself disappears so the layout stays compact.
+		if section.IsLocalSearchFocused() {
+			section.LocalSearchBar.UpdateProgramContext(&ctx)
+			return section.LocalSearchBar.ViewWithFocusedBorder(&ctx, m.ctx.Theme.FaintBorder)
+		}
+		if section.IsSearchFocused() {
+			section.SearchBar.UpdateProgramContext(&ctx)
+			return section.SearchBar.ViewWithFocusedBorder(&ctx, m.ctx.Theme.FaintBorder)
+		}
+		return ""
+	}
+
+	workflowSearchView := ""
+	if focusedPane == actionssection.PaneWorkflows {
+		workflowSearchView = searchView(firstWidth)
+	}
+	workflowSearchHeight := lipgloss.Height(workflowSearchView)
+	runsSearchView := ""
+	if focusedPane == actionssection.PaneRuns {
+		runsSearchView = searchView(secondWidth)
+	}
+	runsSearchHeight := lipgloss.Height(runsSearchView)
+
+	section.SetWorkflowTableDimensions(firstWidth, max(0, height-headerHeight-workflowSearchHeight))
+	section.SetRunTableDimensions(secondWidth, max(0, height-headerHeight-runsSearchHeight))
 
 	header := func(text string, w int) string {
 		return lipgloss.NewStyle().
@@ -1571,14 +1614,23 @@ func (m *Model) renderActionsThreePane(section *actionssection.Model) string {
 			Height(height).
 			MaxHeight(height)
 	}
+	joinPane := func(parts ...string) string {
+		nonEmpty := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part != "" {
+				nonEmpty = append(nonEmpty, part)
+			}
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, nonEmpty...)
+	}
 
 	workflowTitle := "Workflows"
 	if section.GetIsLoading() {
 		workflowTitle = "Workflows…"
 	}
 	workflows := colStyle(firstWidth).Render(
-		lipgloss.JoinVertical(
-			lipgloss.Left,
+		joinPane(
+			workflowSearchView,
 			header(workflowTitle, firstWidth),
 			section.Table.View(),
 		),
@@ -1589,8 +1641,8 @@ func (m *Model) renderActionsThreePane(section *actionssection.Model) string {
 		runsTitle = "Runs…"
 	}
 	runs := colStyle(secondWidth).Render(
-		lipgloss.JoinVertical(
-			lipgloss.Left,
+		joinPane(
+			runsSearchView,
 			header(runsTitle, secondWidth),
 			section.RunsView(),
 		),
@@ -1598,11 +1650,14 @@ func (m *Model) renderActionsThreePane(section *actionssection.Model) string {
 
 	// The details pane only has the 1-line outer header (no inner table
 	// header), so its body can use more height than the workflow/runs panes.
-	details := m.renderActionsRunDetailsPane(section.SelectedRun(), thirdWidth, height, outerHeaderHeight)
+	detailsHeaderHeight := outerHeaderHeight
+	details := m.renderActionsRunDetailsPane(
+		section.SelectedRun(),
+		thirdWidth,
+		height,
+		detailsHeaderHeight,
+	)
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, workflows, runs, details)
-	if searchBarView != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, searchBarView, panes)
-	}
 	return panes
 }
 
@@ -1927,18 +1982,6 @@ func (m *Model) handleActionsNavigation(msg tea.KeyMsg, currSection section.Sect
 		return true, actionCmd
 	}
 	return false, nil
-}
-
-// isActionsDetailsLocalKey reports whether the key is a known actionview-local
-// navigation key (pane switching, zoom, log search, etc.) that should be
-// forwarded to the embedded view when its details pane has parent focus.
-func isActionsDetailsLocalKey(msg tea.KeyMsg) bool {
-	s := msg.String()
-	switch s {
-	case "h", "l", "z", "/", "n", "N", "ctrl+n", "ctrl+p", "m":
-		return true
-	}
-	return false
 }
 
 func (m *Model) syncActionsSelection() tea.Cmd {
