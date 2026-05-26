@@ -119,6 +119,12 @@ func NewModel(
 		LocalSearchBar: search.NewModel(ctx, search.SearchOptions{
 			Prefix:      "local",
 			Placeholder: "filter loaded rows",
+			// The local search filters loaded rows by substring; the
+			// autocomplete contexts (is:open, repo:, author:, ...) are
+			// not meaningful here. Disabling them also keeps the search
+			// box's rounded border closed at the bottom instead of
+			// being drawn open as if a popup were attached below.
+			DisableCompletions: true,
 		}),
 		SearchValue:               filters,
 		IsSearching:               false,

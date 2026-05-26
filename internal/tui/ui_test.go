@@ -1171,6 +1171,193 @@ func TestChecksLogsSearchReceivesTypingBeforeMainLocalSearch(t *testing.T) {
 	require.False(t, prSection.IsLocalSearchFocused(), "typing into logs search should not trigger main local search")
 }
 
+// TestLocalSearchExitsOnVerticalNavKeys verifies that pressing
+// Up/Down/PgUp/PgDn while the local row-filter search is focused exits
+// the search AND moves the row cursor in the same press. The previous
+// behavior required first pressing Enter/Esc to exit, then a second
+// key to move; this caused the first arrow press to feel "lost" because
+// the textinput silently swallowed it.
+func TestLocalSearchExitsOnVerticalNavKeys(t *testing.T) {
+	cases := []struct {
+		name      string
+		key       tea.KeyPressMsg
+		startRow  int
+		wantRow   int
+		wantBlur  bool
+		assertMsg string
+	}{
+		{
+			name:      "down arrow exits and advances cursor",
+			key:       tea.KeyPressMsg{Code: tea.KeyDown},
+			startRow:  0,
+			wantRow:   1,
+			wantBlur:  true,
+			assertMsg: "down arrow should exit local search and move to the next row",
+		},
+		{
+			name:      "up arrow exits and moves cursor up",
+			key:       tea.KeyPressMsg{Code: tea.KeyUp},
+			startRow:  1,
+			wantRow:   0,
+			wantBlur:  true,
+			assertMsg: "up arrow should exit local search and move to the previous row",
+		},
+		{
+			name: "ctrl+down (page down) exits and advances cursor",
+			key:  tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl},
+			// mainPageSize() is MainContentHeight/2 = 10 with the
+			// context below; start far enough up that the page-down
+			// jump lands within the loaded row set (cursor advances
+			// by 10 rows) without triggering FetchNextPageSectionRows.
+			startRow:  0,
+			wantRow:   10,
+			wantBlur:  true,
+			assertMsg: "ctrl+down should exit local search and advance the row cursor by one page",
+		},
+		{
+			name:      "ctrl+up (page up) exits and moves cursor up",
+			key:       tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl},
+			startRow:  15,
+			wantRow:   5,
+			wantBlur:  true,
+			assertMsg: "ctrl+up should exit local search and move the row cursor up by one page",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := config.ParseConfig(config.Location{
+				ConfigFlag:       "../config/testdata/test-config.yml",
+				SkipGlobalConfig: true,
+			})
+			require.NoError(t, err)
+
+			ctx := &context.ProgramContext{
+				Config:              &cfg,
+				View:                config.PRsView,
+				MainContentHeight:   20,
+				DynamicPreviewWidth: 80,
+			}
+			ctx.Theme = theme.ParseTheme(ctx.Config)
+			ctx.Styles = context.InitStyles(ctx.Theme)
+
+			prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+			// Allocate enough rows that PageDown/PageUp (jump size =
+			// mainPageSize() = MainContentHeight/2 = 10) lands inside
+			// the loaded set instead of hitting the bottom boundary
+			// and invoking FetchNextPageSectionRows, which would need
+			// HTTP infrastructure not set up here.
+			for i := 1; i <= 30; i++ {
+				prSection.Prs = append(prSection.Prs, prrow.Data{
+					Primary: testPullRequestData(i, fmt.Sprintf("https://github.com/owner/repo/pull/%d", i)),
+				})
+			}
+			prSection.Table.SetRows(prSection.BuildRows())
+			// Move cursor to the starting row for this case.
+			for i := 0; i < tc.startRow; i++ {
+				prSection.NextRow()
+			}
+			// Enter local-search mode; SetIsLocalSearching(true) focuses
+			// the search bar and the gate under test should treat the
+			// section as IsLocalSearchFocused.
+			_ = prSection.SetIsLocalSearching(true)
+			require.True(t, prSection.IsLocalSearchFocused(),
+				"test setup: local search must be focused before dispatching the nav key")
+			require.Equal(t, tc.startRow, prSection.CurrRow(),
+				"test setup: row cursor must start at the expected position")
+
+			sidebarModel := sidebar.NewModel()
+			sidebarModel.UpdateProgramContext(ctx)
+
+			m := Model{
+				ctx:                ctx,
+				keys:               keys.Keys,
+				prs:                []section.Section{&prSection},
+				currSectionId:      0,
+				prView:             prview.NewModel(ctx),
+				issueSidebar:       issueview.NewModel(ctx),
+				notificationView:   notificationview.NewModel(ctx),
+				footer:             footer.NewModel(ctx),
+				sidebar:            sidebarModel,
+				activePane:         mainPane,
+				prPreviewStates:    map[string]map[int]int{},
+				issuePreviewStates: map[string]int{},
+			}
+			m.ctx.ActivePane = "main"
+			m.prView.UpdateProgramContext(ctx)
+
+			next, _ := m.Update(tc.key)
+			m = next.(Model)
+
+			updated := m.getCurrSection()
+			require.NotNil(t, updated)
+			if tc.wantBlur {
+				require.False(t, updated.IsLocalSearchFocused(),
+					"local search should be blurred after the nav key: %s", tc.assertMsg)
+			}
+			require.Equal(t, tc.wantRow, updated.CurrRow(), tc.assertMsg)
+		})
+	}
+}
+
+// TestLocalSearchTypingNotExitedByLetterKeys is a regression guard for
+// TestLocalSearchExitsOnVerticalNavKeys: only vertical navigation keys
+// should exit the search; printable characters must still route into
+// the search input as before.
+func TestLocalSearchTypingNotExitedByLetterKeys(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config:              &cfg,
+		View:                config.PRsView,
+		MainContentHeight:   20,
+		DynamicPreviewWidth: 80,
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+	prSection.Prs = append(prSection.Prs,
+		prrow.Data{Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1")},
+		prrow.Data{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
+	)
+	prSection.Table.SetRows(prSection.BuildRows())
+	_ = prSection.SetIsLocalSearching(true)
+	require.True(t, prSection.IsLocalSearchFocused())
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.UpdateProgramContext(ctx)
+
+	m := Model{
+		ctx:                ctx,
+		keys:               keys.Keys,
+		prs:                []section.Section{&prSection},
+		currSectionId:      0,
+		prView:             prview.NewModel(ctx),
+		issueSidebar:       issueview.NewModel(ctx),
+		notificationView:   notificationview.NewModel(ctx),
+		footer:             footer.NewModel(ctx),
+		sidebar:            sidebarModel,
+		activePane:         mainPane,
+		prPreviewStates:    map[string]map[int]int{},
+		issuePreviewStates: map[string]int{},
+	}
+	m.ctx.ActivePane = "main"
+	m.prView.UpdateProgramContext(ctx)
+
+	next, _ := m.Update(tea.KeyPressMsg{Text: "a", Code: 'a'})
+	m = next.(Model)
+
+	updated := m.getCurrSection()
+	require.NotNil(t, updated)
+	require.True(t, updated.IsLocalSearchFocused(),
+		"local search must remain focused after typing a printable character")
+}
+
 func testPullRequestData(number int, url string) *data.PullRequestData {
 	pr := &data.PullRequestData{
 		Number:      number,

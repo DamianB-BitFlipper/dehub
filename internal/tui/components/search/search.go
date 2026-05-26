@@ -16,15 +16,24 @@ import (
 )
 
 type Model struct {
-	ctx          *context.ProgramContext
-	initialValue string
-	cmpctl       *cmpcontroller.Controller
+	ctx                *context.ProgramContext
+	initialValue       string
+	cmpctl             *cmpcontroller.Controller
+	disableCompletions bool
 }
 
 type SearchOptions struct {
 	Prefix       string
 	InitialValue string
 	Placeholder  string
+	// DisableCompletions suppresses the autocomplete popup for this
+	// search input. Used by the local row-filter search where the
+	// autocomplete contexts (is:open, author:, repo:, ...) are not
+	// meaningful and the popup would otherwise leave the search box's
+	// border drawn open at the bottom even though no popup is rendered
+	// (BaseModel.ViewCompletions only exposes the global search bar's
+	// completions to the floating-layer renderer in ui.go).
+	DisableCompletions bool
 }
 
 func NewModel(ctx *context.ProgramContext, opts SearchOptions) Model {
@@ -65,9 +74,10 @@ func NewModel(ctx *context.ProgramContext, opts SearchOptions) Model {
 	ctl.SetSelectStyles(selectStyles)
 
 	m := Model{
-		ctx:          ctx,
-		initialValue: opts.InitialValue,
-		cmpctl:       &ctl,
+		ctx:                ctx,
+		initialValue:       opts.InitialValue,
+		cmpctl:             &ctl,
+		disableCompletions: opts.DisableCompletions,
 	}
 
 	m.cmpctl.Exit()
@@ -90,6 +100,11 @@ func (m Model) ViewWithFocusedBorder(ctx *context.ProgramContext, focusedBorder 
 
 func (m Model) view(ctx *context.ProgramContext, focusedBorder color.Color) string {
 	s := m.ctx.Styles.Search.Root
+	// Only modify the bottom border to "open into" the completions
+	// popup when the popup will actually be rendered. Inputs that
+	// disable completions must keep their closed rounded box;
+	// otherwise the border would extend below the input even though
+	// nothing is drawn there (see SearchOptions.DisableCompletions).
 	if cmp := m.ViewCompletions(); cmp != "" {
 		b := lipgloss.RoundedBorder()
 		b.BottomLeft = lipgloss.RoundedBorder().MiddleLeft
@@ -103,6 +118,9 @@ func (m Model) view(ctx *context.ProgramContext, focusedBorder color.Color) stri
 }
 
 func (m Model) ViewCompletions() string {
+	if m.disableCompletions {
+		return ""
+	}
 	return m.cmpctl.ViewCompletions()
 }
 
@@ -137,10 +155,15 @@ func (m *Model) Focus() tea.Cmd {
 		Repo:                             repo,
 		EnterFetch:                       cmpcontroller.FetchWithLoading,
 		ConfirmDiscardOnCancel:           false,
-		HideAutocompleteWhenContextEmpty: false,
+		HideAutocompleteWhenContextEmpty: m.disableCompletions,
 		InitialValue:                     m.cmpctl.Value(),
 	})
-	m.cmpctl.ShowCompletions()
+	// Searches that disable completions (local row filter) must not
+	// force the popup open; only the global search bar shows the
+	// autocomplete contexts (is:open, repo:, author:, ...).
+	if !m.disableCompletions {
+		m.cmpctl.ShowCompletions()
+	}
 	return cmd
 }
 

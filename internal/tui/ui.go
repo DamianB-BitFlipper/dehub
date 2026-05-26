@@ -263,7 +263,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if currSection != nil && (currSection.IsSearchFocused() || currSection.IsLocalSearchFocused() ||
+		// When the local row-filter search is focused, vertical
+		// navigation keys (Up/Down/PgUp/PgDn) exit the search and then
+		// fall through to the universal navigation handlers below so
+		// the same press also moves the row cursor and triggers the
+		// normal preview/sidebar refresh via onViewedRowChanged. All
+		// other keys (typing, esc, enter, ctrl+c, ...) still route
+		// into the section's HandleLocalSearchKey as before. The
+		// global search bar and prompt confirmation continue to
+		// swallow every key while focused.
+		if currSection != nil && currSection.IsLocalSearchFocused() &&
+			!currSection.IsSearchFocused() && !currSection.IsPromptConfirmationFocused() {
+			if key.Matches(msg, m.keys.Up) || key.Matches(msg, m.keys.Down) ||
+				m.isPageUpKey(msg) || m.isPageDownKey(msg) {
+				if exitCmd := currSection.SetIsLocalSearching(false); exitCmd != nil {
+					cmds = append(cmds, exitCmd)
+				}
+				// Fall through; do not return.
+			} else {
+				cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
+				return m, cmd
+			}
+		} else if currSection != nil && (currSection.IsSearchFocused() ||
 			currSection.IsPromptConfirmationFocused()) {
 			cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
 			return m, cmd
