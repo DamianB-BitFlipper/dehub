@@ -903,7 +903,13 @@ func FetchAllSections(
 				// Preserve user's filter state - don't reset on refresh
 				sectionModel.IsFilteredByCurrentRemote = oldSection.IsFilteredByCurrentRemote
 				sectionModel.SearchValue = oldSection.SearchValue
+				sectionModel.LocalSearchValue = oldSection.LocalSearchValue
+				sectionModel.SortOrder = oldSection.SortOrder
 				sectionModel.SearchBar.SetValue(oldSection.SearchValue)
+				// Carry forward the user's cursor position so refreshes
+				// don't snap the selection back to the top of the list.
+				sectionModel.Table.SetRows(sectionModel.BuildRows())
+				sectionModel.Table.SetCurrItem(oldSection.Table.GetCurrItem())
 			}
 		}
 

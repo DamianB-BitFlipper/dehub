@@ -632,10 +632,12 @@ func TestPRPreviewTabMemory(t *testing.T) {
 
 	m.prView.SetRow(&prSection.Prs[0])
 	m.prView.GoToActivityTab()
+	activityTabIdx := m.prView.SelectedTabIndex()
 	m.sidebar.ScrollToOffset(7)
 	m.saveCurrentPRPreviewState()
-	require.Equal(t, 7, m.prPreviewStates[prSection.Prs[0].Primary.Url].scrollY,
-		"saved PR preview state should include scroll offset")
+	require.Equal(t, 7,
+		m.prPreviewStates[prSection.Prs[0].Primary.Url][activityTabIdx],
+		"saved PR preview state should include scroll offset for the active tab")
 
 	prSection.NextRow()
 	m.prView.SetRow(&prSection.Prs[1])
@@ -646,7 +648,7 @@ func TestPRPreviewTabMemory(t *testing.T) {
 	prSection.PrevRow()
 	m.prView.SetRow(&prSection.Prs[0])
 	m.restoreCurrentPRPreviewState()
-	require.Equal(t, 1, m.prView.SelectedTabIndex(),
+	require.Equal(t, activityTabIdx, m.prView.SelectedTabIndex(),
 		"returning to a PR should restore its previously selected preview tab")
 }
 

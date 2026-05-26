@@ -120,6 +120,14 @@ func (m *Model) ResetCurrItem() {
 	m.rowsViewport.ResetCurrItem()
 }
 
+// SetCurrItem positions the table cursor at the supplied row index,
+// clamped to the visible row count. Used to preserve cursor position
+// across rebuilds (e.g. interval refreshes).
+func (m *Model) SetCurrItem(idx int) {
+	m.rowsViewport.SetCurrItem(idx)
+	m.SyncViewPortContent()
+}
+
 func (m *Model) GetCurrItem() int {
 	return m.rowsViewport.GetCurrItem()
 }

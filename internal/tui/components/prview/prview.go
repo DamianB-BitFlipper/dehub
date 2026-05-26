@@ -50,7 +50,17 @@ type Model struct {
 	activitySnippetsExpanded bool
 	actionChecks             *actionview.Model
 	actionChecksKey          string
+	// actionChecksCache stashes the Checks-tab embedded actionview keyed
+	// by "repo#number" so that switching between PR rows (or away to
+	// another view and back) restores the user's selected job/step,
+	// log scroll, search query, and zoom state for that PR.
+	actionChecksCache map[string]*actionview.Model
 }
+
+// actionChecksCacheLimit caps the number of cached Checks-tab actionview
+// instances retained across PR row switches; bounded to prevent
+// unbounded growth in long sessions.
+const actionChecksCacheLimit = 16
 
 type activityRenderCache struct {
 	width       int
@@ -639,20 +649,53 @@ func (m *Model) SetSection(id int, sectionType string) {
 
 func (m *Model) SetRow(d *prrow.Data) {
 	if d == nil {
+		// Stash the active checks view before clearing so a subsequent
+		// row restore can bring it back.
+		m.stashActiveActionChecks()
 		m.pr = nil
 		m.actionChecks = nil
 		m.actionChecksKey = ""
-	} else {
-		newPR := d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url
-		if newPR {
-			m.FocusNewComment()
-			m.activitySnippetsExpanded = false
-			m.invalidateActivityCache()
-			m.actionChecks = nil
-			m.actionChecksKey = ""
+		return
+	}
+
+	newPR := d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url
+	if newPR {
+		m.FocusNewComment()
+		m.activitySnippetsExpanded = false
+		m.invalidateActivityCache()
+		// Cache the outgoing PR's Checks-tab actionview keyed by its
+		// repo#number so returning to that PR (within the cache cap)
+		// resurrects the user's selection / scroll / search state.
+		m.stashActiveActionChecks()
+		m.actionChecks = nil
+		m.actionChecksKey = ""
+	}
+	m.pr = &prrow.PullRequest{Ctx: m.ctx, Data: d}
+	m.clampFocusedReviewThread()
+}
+
+// stashActiveActionChecks moves the currently-active Checks-tab actionview
+// into the cache so that ensureActionChecks() for the same PR later picks
+// it back up instead of constructing a fresh instance.
+func (m *Model) stashActiveActionChecks() {
+	if m.actionChecks == nil || m.actionChecksKey == "" {
+		return
+	}
+	if m.actionChecksCache == nil {
+		m.actionChecksCache = map[string]*actionview.Model{}
+	}
+	if existing, ok := m.actionChecksCache[m.actionChecksKey]; ok && existing == m.actionChecks {
+		return
+	}
+	m.actionChecksCache[m.actionChecksKey] = m.actionChecks
+	if len(m.actionChecksCache) > actionChecksCacheLimit {
+		for k := range m.actionChecksCache {
+			if k == m.actionChecksKey {
+				continue
+			}
+			delete(m.actionChecksCache, k)
+			break
 		}
-		m.pr = &prrow.PullRequest{Ctx: m.ctx, Data: d}
-		m.clampFocusedReviewThread()
 	}
 }
 
@@ -730,6 +773,20 @@ func (m *Model) ensureActionChecks() tea.Cmd {
 	key := repo + "#" + number
 	if m.actionChecks != nil && m.actionChecksKey == key {
 		m.actionChecks.SetSize(m.getIndentedContentWidth(), m.actionChecksHeight())
+		return nil
+	}
+
+	// Stash the currently-active checks (different PR) before replacing it
+	// so the user can return to that PR without losing state.
+	m.stashActiveActionChecks()
+
+	// If we've seen this PR before, restore its actionview instead of
+	// rebuilding it from scratch.
+	if cached, ok := m.actionChecksCache[key]; ok && cached != nil {
+		delete(m.actionChecksCache, key)
+		cached.SetSize(m.getIndentedContentWidth(), m.actionChecksHeight())
+		m.actionChecks = cached
+		m.actionChecksKey = key
 		return nil
 	}
 

@@ -429,6 +429,7 @@ func (m *Model) ResetRows() {
 
 func FetchAllSections(
 	ctx *context.ProgramContext,
+	existing []section.Section,
 ) (sections []section.Section, fetchAllCmd tea.Cmd) {
 	sectionConfigs := ctx.Config.IssuesSections
 	fetchIssuesCmds := make([]tea.Cmd, 0, len(sectionConfigs))
@@ -441,6 +442,20 @@ func FetchAllSections(
 			time.Now(),
 			time.Now(),
 		) // 0 is the search section
+		// Carry forward in-memory state from the previous instance so that
+		// interval refreshes don't reset the user's selection or filters.
+		if len(existing) > i+1 && existing[i+1] != nil {
+			if oldSection, ok := existing[i+1].(*Model); ok {
+				sectionModel.Issues = oldSection.Issues
+				sectionModel.SearchValue = oldSection.SearchValue
+				sectionModel.LocalSearchValue = oldSection.LocalSearchValue
+				sectionModel.SortOrder = oldSection.SortOrder
+				sectionModel.IsFilteredByCurrentRemote = oldSection.IsFilteredByCurrentRemote
+				sectionModel.SearchBar.SetValue(oldSection.SearchValue)
+				sectionModel.Table.SetRows(sectionModel.BuildRows())
+				sectionModel.Table.SetCurrItem(oldSection.Table.GetCurrItem())
+			}
+		}
 		if sectionConfig.Layout.CreatorIcon.Hidden != nil {
 			sectionModel.ShowAuthorIcon = !*sectionConfig.Layout.CreatorIcon.Hidden
 		}

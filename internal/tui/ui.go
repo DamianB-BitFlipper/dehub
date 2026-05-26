@@ -54,32 +54,49 @@ const (
 )
 
 type Model struct {
-	keys              *keys.KeyMap
-	sidebar           sidebar.Model
-	prView            prview.Model
-	issueSidebar      issueview.Model
-	notificationView  notificationview.Model
-	actionRunView     *actionview.Model
-	actionRunViewKey  string
-	currSectionId     int
-	footer            footer.Model
-	prs               []section.Section
-	issues            []section.Section
-	notifications     []section.Section
-	actions           []section.Section
-	tabs              tabs.Model
-	ctx               *context.ProgramContext
-	taskSpinner       spinner.Model
-	tasks             map[string]context.Task
-	prPreviewStates   map[string]prPreviewState
-	copySelection     copySelectionModel
-	messagePopup      *messagePopup
-	mergePRPopup      *mergePRPopup
-	visibleRefreshes  map[string]int
-	visibleRefreshGen int
-	repoBranches      map[string]repoBranchesState
-	positionOverride  string // "" means no override, "right" or "bottom"
-	activePane        activePane
+	keys               *keys.KeyMap
+	sidebar            sidebar.Model
+	prView             prview.Model
+	issueSidebar       issueview.Model
+	notificationView   notificationview.Model
+	actionRunView      *actionview.Model
+	actionRunViewKey   string
+	actionRunViewCache map[string]*actionview.Model
+	currSectionId      int
+	footer             footer.Model
+	prs                []section.Section
+	issues             []section.Section
+	notifications      []section.Section
+	actions            []section.Section
+	tabs               tabs.Model
+	ctx                *context.ProgramContext
+	taskSpinner        spinner.Model
+	tasks              map[string]context.Task
+	// prPreviewStates stores per-PR, per-tab sidebar scroll positions so that
+	// returning to a previously viewed PR's tab restores its scroll.
+	// Outer key: PR URL. Inner key: sidebar tab index. Value: viewport YOffset.
+	prPreviewStates    map[string]map[int]int
+	issuePreviewStates map[string]int
+	copySelection      copySelectionModel
+	messagePopup       *messagePopup
+	mergePRPopup       *mergePRPopup
+	visibleRefreshes   map[string]int
+	visibleRefreshGen  int
+	repoBranches       map[string]repoBranchesState
+	positionOverride   string // "" means no override, "right" or "bottom"
+	activePane         activePane
+	// viewStates remembers per-view UI preferences (sidebar open/closed,
+	// active section, focused pane) so that navigating away and back
+	// restores the user's state for each view. Actions view's entry always
+	// reports sidebarOpen=false because the Actions view manages its own
+	// three-pane layout and does not consume the global sidebar.
+	viewStates map[config.ViewType]*viewState
+}
+
+type viewState struct {
+	sidebarOpen   bool
+	currSectionId int
+	activePane    activePane
 }
 
 type repoBranchesState struct {
@@ -87,21 +104,26 @@ type repoBranchesState struct {
 	loading bool
 }
 
-type prPreviewState struct {
-	tabIndex int
-	scrollY  int
-}
+// actionViewCacheLimit caps the number of cached embedded actionview
+// instances kept across view switches. Ticks scheduled by cached models
+// self-terminate (returning nil when their owner is no longer routing
+// messages), but unbounded cache growth would still leak memory over a
+// long session.
+const actionViewCacheLimit = 16
 
 func NewModel(location config.Location) Model {
 	taskSpinner := spinner.Model{Spinner: spinner.Dot}
 	m := Model{
-		keys:             keys.Keys,
-		sidebar:          sidebar.NewModel(),
-		taskSpinner:      taskSpinner,
-		tasks:            map[string]context.Task{},
-		prPreviewStates:  map[string]prPreviewState{},
-		visibleRefreshes: map[string]int{},
-		repoBranches:     map[string]repoBranchesState{},
+		keys:               keys.Keys,
+		sidebar:            sidebar.NewModel(),
+		taskSpinner:        taskSpinner,
+		tasks:              map[string]context.Task{},
+		prPreviewStates:    map[string]map[int]int{},
+		issuePreviewStates: map[string]int{},
+		actionRunViewCache: map[string]*actionview.Model{},
+		visibleRefreshes:   map[string]int{},
+		repoBranches:       map[string]repoBranchesState{},
+		viewStates:         map[config.ViewType]*viewState{},
 	}
 
 	version := "dev"
@@ -500,11 +522,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				key.Matches(msg, keys.PRKeys.NextSidebarTab)):
 				var scmds []tea.Cmd
 				var scmd tea.Cmd
+				// Save the outgoing tab's scroll under the *current* tab
+				// index before the carousel moves, so returning to this
+				// tab later restores the scroll the user just left.
+				outgoingTab := m.prView.SelectedTabIndex()
+				m.savePRPreviewStateAt(outgoingTab)
 				m.prView, scmd = m.prView.Update(msg)
 				scmds = append(scmds, scmd)
 				m.syncSidebar()
-				if m.prView.IsActivityTab() {
-					m.scrollActivityToSavedOffsetOrBottom()
+				// After re-rendering for the new tab, restore any saved
+				// scroll for that tab. Falls back to top for first-visit.
+				if !m.restoreCurrentPRPreviewTab() {
+					m.sidebar.ScrollToTop()
 				}
 				scmds = append(scmds, m.reconcileVisibleRefreshes())
 				return m, tea.Batch(scmds...)
@@ -976,7 +1005,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ctx.View = m.ctx.Config.Defaults.View
 		m.tabs.SetHasSearchSection(viewHasSearchSection(m.ctx.View))
 		m.currSectionId = m.getCurrentViewDefaultSection()
-		m.sidebar.IsOpen = msg.Config.Defaults.Preview.Open
+		// Initialize sidebar from config; Actions view's per-view entry
+		// pins sidebarOpen to false (its three-pane layout doesn't use
+		// the global sidebar).
+		if m.ctx.View == config.ActionsView {
+			m.sidebar.IsOpen = false
+		} else {
+			m.sidebar.IsOpen = msg.Config.Defaults.Preview.Open
+		}
+		// Seed per-view state for every known view so that the first
+		// navigation away/back yields the configured defaults rather
+		// than zero values.
+		for _, v := range []config.ViewType{
+			config.PRsView, config.IssuesView,
+			config.NotificationsView, config.ActionsView,
+		} {
+			m.ensureViewState(v)
+		}
+		// Persist the live state of the starting view so the seeded
+		// entry reflects the actual currSectionId for this run.
+		m.captureCurrentViewState()
 		m.syncMainContentDimensions()
 
 		newSections, fetchSectionsCmds := m.fetchAllViewSections()
@@ -1088,7 +1136,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			syncCmd := m.syncSidebar()
 			cmds = append(cmds, syncCmd)
 			if m.prView.IsActivityTab() {
-				m.scrollActivityToSavedOffsetOrBottom()
+				m.scrollActivityToBottomIfNoSavedOffset()
 			}
 			cmds = append(cmds, m.prView.ActivateChecks())
 			cmds = append(cmds, m.reconcileVisibleRefreshes())
@@ -1711,6 +1759,79 @@ type notificationIssueFetchedMsg struct {
 func (m *Model) setCurrSectionId(newSectionId int) {
 	m.currSectionId = newSectionId
 	m.tabs.SetCurrSectionId(newSectionId)
+	// Mirror to per-view state so future view switches restore the same
+	// section.
+	if m.ctx != nil {
+		m.ensureViewState(m.ctx.View).currSectionId = newSectionId
+	}
+}
+
+// ensureViewState returns the persistent UI state for a view, creating it
+// lazily on first access. For Actions view the entry's sidebarOpen is
+// pinned to false since the global sidebar is not used by that view's
+// three-pane layout.
+func (m *Model) ensureViewState(v config.ViewType) *viewState {
+	if m.viewStates == nil {
+		m.viewStates = map[config.ViewType]*viewState{}
+	}
+	s, ok := m.viewStates[v]
+	if !ok {
+		s = &viewState{
+			activePane: mainPane,
+		}
+		switch v {
+		case config.ActionsView:
+			s.sidebarOpen = false
+			s.currSectionId = 0
+		case config.NotificationsView, config.PRsView, config.IssuesView:
+			s.currSectionId = 1
+			if m.ctx != nil && m.ctx.Config != nil {
+				s.sidebarOpen = m.ctx.Config.Defaults.Preview.Open
+			}
+		default:
+			s.currSectionId = 1
+		}
+		m.viewStates[v] = s
+	}
+	return s
+}
+
+// captureCurrentViewState writes the live Model state for the current view
+// back into viewStates so that a subsequent view switch can restore it.
+func (m *Model) captureCurrentViewState() {
+	if m.ctx == nil {
+		return
+	}
+	s := m.ensureViewState(m.ctx.View)
+	// Actions view's sidebarOpen is pinned to false - the global sidebar is
+	// not used there. Capturing IsOpen during Actions would clobber the
+	// pinned state when the user pressed `p` mid-Actions (no-op'd below).
+	if m.ctx.View != config.ActionsView {
+		s.sidebarOpen = m.sidebar.IsOpen
+	}
+	s.currSectionId = m.currSectionId
+	s.activePane = m.activePane
+}
+
+// applyViewState writes the persisted state for the current view onto the
+// live Model fields. The caller is responsible for invoking
+// syncMainContentDimensions afterward so that downstream contexts mirror the
+// new sidebar state.
+func (m *Model) applyViewState() {
+	if m.ctx == nil {
+		return
+	}
+	s := m.ensureViewState(m.ctx.View)
+	m.sidebar.IsOpen = s.sidebarOpen
+	m.currSectionId = s.currSectionId
+	m.tabs.SetCurrSectionId(s.currSectionId)
+	// activePane is only meaningful when the sidebar is open; clamp to
+	// mainPane otherwise so isPreviewFocused() stays consistent.
+	if s.sidebarOpen {
+		m.activePane = s.activePane
+	} else {
+		m.activePane = mainPane
+	}
 }
 
 func (m *Model) updateNotificationSections(msg tea.Msg) tea.Cmd {
@@ -1737,10 +1858,13 @@ func (m *Model) onViewedRowChanged() tea.Cmd {
 	if m.ctx.View == config.ActionsView {
 		return m.syncActionsSelection()
 	}
+	// Save scroll state for whatever row is currently shown in the
+	// sidebar before we re-render it for the newly selected row.
 	m.saveCurrentPRPreviewState()
+	m.saveCurrentIssuePreviewState()
 	m.prView.SetSummaryViewLess()
 	sidebarCmd := m.syncSidebar()
-	restored := m.restoreCurrentPRPreviewState()
+	restored := m.restoreCurrentPRPreviewState() || m.restoreCurrentIssuePreviewState()
 	enrichCmd := m.prView.EnrichCurrRow()
 	if !restored {
 		m.sidebar.ScrollToTop()
@@ -1840,20 +1964,36 @@ func (m *Model) syncActionsSelection() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// saveCurrentPRPreviewState records the sidebar viewport offset for the
+// PR currently shown in the preview pane, keyed by URL and the currently
+// selected sidebar tab. This is what lets the user navigate between sidebar
+// tabs (or away to another row/view) and return to the same scroll position.
 func (m *Model) saveCurrentPRPreviewState() {
+	m.savePRPreviewStateAt(m.prView.SelectedTabIndex())
+}
+
+// savePRPreviewStateAt records the sidebar viewport offset for the PR
+// currently shown, under the supplied tab index. Use this when saving the
+// scroll for an *outgoing* tab (i.e. before the carousel moves to a new tab).
+func (m *Model) savePRPreviewStateAt(tabIndex int) {
 	url := m.prView.CurrentPRURL()
 	if url == "" {
 		return
 	}
 	if m.prPreviewStates == nil {
-		m.prPreviewStates = map[string]prPreviewState{}
+		m.prPreviewStates = map[string]map[int]int{}
 	}
-	m.prPreviewStates[url] = prPreviewState{
-		tabIndex: m.prView.SelectedTabIndex(),
-		scrollY:  m.sidebar.YOffset(),
+	tabs := m.prPreviewStates[url]
+	if tabs == nil {
+		tabs = map[int]int{}
+		m.prPreviewStates[url] = tabs
 	}
+	tabs[tabIndex] = m.sidebar.YOffset()
 }
 
+// restoreCurrentPRPreviewState restores the preview state for the currently
+// selected row. For PR rows it looks up the saved scroll for the saved tab,
+// honoring the per-tab map. Returns true if any restoration happened.
 func (m *Model) restoreCurrentPRPreviewState() bool {
 	pr, ok := m.getCurrRowData().(*prrow.Data)
 	if !ok || pr == nil || pr.Primary == nil {
@@ -1864,10 +2004,30 @@ func (m *Model) restoreCurrentPRPreviewState() bool {
 	if url == "" {
 		return false
 	}
-	if state, ok := m.prPreviewStates[url]; ok {
-		m.prView.GoToTab(state.tabIndex)
+	if tabs, ok := m.prPreviewStates[url]; ok && len(tabs) > 0 {
+		// Pick the most recently-recorded tab as the "last viewed" tab
+		// for this PR. We don't track recency explicitly; preferring the
+		// already-selected tab if it has saved state, then falling back
+		// to any saved tab, is a faithful approximation.
+		selected := m.prView.SelectedTabIndex()
+		var tabIdx int
+		var off int
+		if savedOff, hasSelected := tabs[selected]; hasSelected {
+			tabIdx, off = selected, savedOff
+		} else {
+			// Deterministic-ish: pick the lowest tab index that has saved
+			// state. The set is small (5 tabs max), so this is fine.
+			best := -1
+			for k := range tabs {
+				if best == -1 || k < best {
+					best = k
+				}
+			}
+			tabIdx, off = best, tabs[best]
+		}
+		m.prView.GoToTab(tabIdx)
 		m.syncSidebar()
-		m.sidebar.ScrollToOffset(state.scrollY)
+		m.sidebar.ScrollToOffset(off)
 		return true
 	}
 	m.prView.GoToFirstTab()
@@ -1875,15 +2035,75 @@ func (m *Model) restoreCurrentPRPreviewState() bool {
 	return false
 }
 
-func (m *Model) scrollActivityToSavedOffsetOrBottom() {
+// restoreCurrentPRPreviewTab restores the saved scroll for the *currently*
+// selected sidebar tab (i.e. after the carousel has moved). Unlike
+// restoreCurrentPRPreviewState it does not switch tabs - it only applies a
+// scroll offset if one was recorded for this PR's current tab.
+func (m *Model) restoreCurrentPRPreviewTab() bool {
 	url := m.prView.CurrentPRURL()
-	if url != "" {
-		if state, ok := m.prPreviewStates[url]; ok && state.tabIndex == m.prView.SelectedTabIndex() {
-			m.sidebar.ScrollToOffset(state.scrollY)
-			return
-		}
+	if url == "" {
+		return false
+	}
+	tabs, ok := m.prPreviewStates[url]
+	if !ok {
+		return false
+	}
+	off, ok := tabs[m.prView.SelectedTabIndex()]
+	if !ok {
+		return false
+	}
+	m.sidebar.ScrollToOffset(off)
+	return true
+}
+
+// scrollActivityToBottomIfNoSavedOffset is invoked once after PR
+// enrichment completes. If the user has previously interacted with the
+// Activity tab for this PR, their saved offset wins; otherwise the
+// default is "show the most recent activity" - i.e. scroll to bottom.
+// This is *not* called on plain tab navigation; that path uses
+// restoreCurrentPRPreviewTab so revisiting Activity preserves the user's
+// scroll position even if they hadn't yet scrolled it themselves.
+func (m *Model) scrollActivityToBottomIfNoSavedOffset() {
+	if m.restoreCurrentPRPreviewTab() {
+		return
 	}
 	m.sidebar.ScrollToBottom()
+}
+
+// saveCurrentIssuePreviewState records the sidebar viewport offset for the
+// Issue currently shown in the preview pane, keyed by URL.
+func (m *Model) saveCurrentIssuePreviewState() {
+	issue, ok := m.getCurrRowData().(*data.IssueData)
+	if !ok || issue == nil {
+		return
+	}
+	url := issue.Url
+	if url == "" {
+		return
+	}
+	if m.issuePreviewStates == nil {
+		m.issuePreviewStates = map[string]int{}
+	}
+	m.issuePreviewStates[url] = m.sidebar.YOffset()
+}
+
+// restoreCurrentIssuePreviewState applies any saved scroll offset for the
+// currently selected Issue row. Returns true if restoration happened.
+func (m *Model) restoreCurrentIssuePreviewState() bool {
+	issue, ok := m.getCurrRowData().(*data.IssueData)
+	if !ok || issue == nil {
+		return false
+	}
+	url := issue.Url
+	if url == "" {
+		return false
+	}
+	off, ok := m.issuePreviewStates[url]
+	if !ok {
+		return false
+	}
+	m.sidebar.ScrollToOffset(off)
+	return true
 }
 
 func (m *Model) onWindowSizeChanged(msg tea.WindowSizeMsg) {
@@ -2036,9 +2256,19 @@ func (m *Model) syncMainContentDimensions() {
 }
 
 func (m *Model) cyclePreview() tea.Cmd {
+	// The Actions view does not use the global sidebar - its three-pane
+	// layout renders independently of m.sidebar. Toggling here would
+	// silently mutate the per-view preference of the other views (since
+	// the cycle is global) without producing any visible effect in
+	// Actions, so we treat `p` as a no-op while Actions is focused.
+	if m.ctx != nil && m.ctx.View == config.ActionsView {
+		return nil
+	}
+
 	if !m.sidebar.IsOpen {
 		m.sidebar.IsOpen = true
 		m.positionOverride = "right"
+		m.mirrorSidebarOpenToCurrentView()
 		m.syncMainContentDimensions()
 		m.syncProgramContext()
 		return tea.Batch(m.syncSidebar(), m.reconcileVisibleRefreshes())
@@ -2053,9 +2283,21 @@ func (m *Model) cyclePreview() tea.Cmd {
 
 	m.sidebar.IsOpen = false
 	m.positionOverride = ""
+	m.mirrorSidebarOpenToCurrentView()
 	m.syncMainContentDimensions()
 	m.syncProgramContext()
 	return m.reconcileVisibleRefreshes()
+}
+
+// mirrorSidebarOpenToCurrentView writes m.sidebar.IsOpen into the persisted
+// state for the current view so that future view switches restore the same
+// preference. Actions view's entry stays pinned to false; sidebar mutations
+// during Actions cyclePreview are already short-circuited above.
+func (m *Model) mirrorSidebarOpenToCurrentView() {
+	if m.ctx == nil || m.ctx.View == config.ActionsView {
+		return
+	}
+	m.ensureViewState(m.ctx.View).sidebarOpen = m.sidebar.IsOpen
 }
 
 func (m *Model) openSidebarForPRInput(setFunc func(bool) tea.Cmd) tea.Cmd {
@@ -2065,6 +2307,7 @@ func (m *Model) openSidebarForPRInput(setFunc func(bool) tea.Cmd) tea.Cmd {
 
 func (m *Model) openSidebarForInput(setFunc func(bool) tea.Cmd) tea.Cmd {
 	m.sidebar.IsOpen = true
+	m.mirrorSidebarOpenToCurrentView()
 	cmd := setFunc(true)
 	m.syncMainContentDimensions()
 	m.syncSidebar()
@@ -2074,6 +2317,7 @@ func (m *Model) openSidebarForInput(setFunc func(bool) tea.Cmd) tea.Cmd {
 
 func (m *Model) openSidebarForInputNoScroll(setFunc func(bool) tea.Cmd) tea.Cmd {
 	m.sidebar.IsOpen = true
+	m.mirrorSidebarOpenToCurrentView()
 	cmd := setFunc(true)
 	m.syncMainContentDimensions()
 	m.syncSidebar()
@@ -2175,6 +2419,9 @@ func actionsRunStatus(run *data.WorkflowRun) string {
 
 func (m *Model) ensureActionRunView(run *data.WorkflowRun, width int) tea.Cmd {
 	if run == nil || run.GetRepoNameWithOwner() == "" || run.Id == 0 {
+		// Stash whatever was active before clearing so we can resurrect it
+		// if the user navigates back to the same run.
+		m.cacheActionRunView()
 		m.actionRunView = nil
 		m.actionRunViewKey = ""
 		return nil
@@ -2182,6 +2429,17 @@ func (m *Model) ensureActionRunView(run *data.WorkflowRun, width int) tea.Cmd {
 	key := fmt.Sprintf("%s:%d", run.GetRepoNameWithOwner(), run.Id)
 	if m.actionRunView != nil && m.actionRunViewKey == key {
 		m.actionRunView.SetSize(width, m.ctx.MainContentHeight)
+		return nil
+	}
+	// Switching to a different run within the same session: keep the
+	// outgoing view around so the user can come back to it without losing
+	// scroll/selection state.
+	m.cacheActionRunView()
+	if cached, ok := m.actionRunViewCache[key]; ok && cached != nil {
+		delete(m.actionRunViewCache, key)
+		cached.SetSize(width, m.ctx.MainContentHeight)
+		m.actionRunView = cached
+		m.actionRunViewKey = key
 		return nil
 	}
 	view := actionview.NewModel(run.GetRepoNameWithOwner(), "", actionview.ModelOpts{
@@ -2266,6 +2524,9 @@ func (m *Model) syncSidebar() tea.Cmd {
 		}
 	case *data.Workflow:
 		keys.SetPRPreviewContext(keys.PRPreviewContextNone)
+		// Stash any active run-detail view so navigating back to the same
+		// run later restores the user's logs scroll / selection.
+		m.cacheActionRunView()
 		m.actionRunView = nil
 		m.actionRunViewKey = ""
 		m.sidebar.ClearHeader()
@@ -2576,7 +2837,7 @@ func (m *Model) fetchAllViewSections() ([]section.Section, tea.Cmd) {
 		cmds = append(cmds, prcmds)
 		return s, tea.Batch(cmds...)
 	default:
-		s, issuecmds := issuessection.FetchAllSections(m.ctx)
+		s, issuecmds := issuessection.FetchAllSections(m.ctx, m.issues)
 		cmds = append(cmds, issuecmds)
 		return s, tea.Batch(cmds...)
 	}
@@ -2725,6 +2986,10 @@ func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
 	views := []config.ViewType{config.PRsView}
 	views = append(views, config.ActionsView, config.IssuesView, config.NotificationsView)
 
+	// Persist the outgoing view's UI state before we mutate Model fields so
+	// that returning to this view later restores the user's preferences.
+	m.captureCurrentViewState()
+
 	// Reset notification subject when leaving notifications view
 	if m.ctx.View == config.NotificationsView {
 		keys.SetNotificationSubject(keys.NotificationSubjectNone)
@@ -2732,9 +2997,13 @@ func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
 		m.notificationView.ClearSubject()
 	}
 
-	// Drop the embedded actionview when leaving the Actions view so its
-	// background interval-fetch ticks self-terminate and memory is freed.
+	// Stash the embedded actionview when leaving the Actions view so the
+	// user's selected job/step/log-scroll survives a round-trip through
+	// another view. Cached entries' interval ticks self-terminate (the
+	// parent stops routing messages to them) so memory growth is bounded
+	// by actionViewCacheLimit.
 	if m.ctx.View == config.ActionsView {
+		m.cacheActionRunView()
 		m.actionRunView = nil
 		m.actionRunViewKey = ""
 	}
@@ -2750,15 +3019,13 @@ func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
 	m.ctx.View = views[nextIndex]
 	m.tabs.SetHasSearchSection(viewHasSearchSection(m.ctx.View))
 
-	// The Actions view manages its own three-pane layout and does not use
-	// the global sidebar; close it so MainContentWidth/Height are
-	// recomputed without sidebar reservation.
-	if m.ctx.View == config.ActionsView && m.sidebar.IsOpen {
-		m.sidebar.IsOpen = false
-	}
+	// Restore the entering view's persisted UI state. Actions view's
+	// sidebarOpen entry is pinned to false, so this also handles the
+	// "Actions doesn't use the global sidebar" case without mutating any
+	// other view's preferences.
+	m.applyViewState()
 
 	m.syncMainContentDimensions()
-	m.setCurrSectionId(m.getCurrentViewDefaultSection())
 
 	var cmds []tea.Cmd
 	currSections := m.getCurrentViewSections()
@@ -2772,6 +3039,35 @@ func (m *Model) switchSelectedViewInDirection(direction int) tea.Cmd {
 	cmds = append(cmds, m.onViewedRowChanged())
 
 	return tea.Batch(cmds...)
+}
+
+// cacheActionRunView stashes the current embedded actionview keyed by its
+// run identifier so that returning to the same workflow run restores the
+// user's selected job/step, log scroll, search query, and zoom state. The
+// cache is capped at actionViewCacheLimit; oldest unused entries (other
+// than the one being inserted) are evicted on overflow.
+func (m *Model) cacheActionRunView() {
+	if m.actionRunView == nil || m.actionRunViewKey == "" {
+		return
+	}
+	if m.actionRunViewCache == nil {
+		m.actionRunViewCache = map[string]*actionview.Model{}
+	}
+	if existing, ok := m.actionRunViewCache[m.actionRunViewKey]; ok && existing == m.actionRunView {
+		// Already cached at this key (same pointer); nothing to do.
+		return
+	}
+	m.actionRunViewCache[m.actionRunViewKey] = m.actionRunView
+	if len(m.actionRunViewCache) > actionViewCacheLimit {
+		// Evict an arbitrary entry other than the one we just inserted.
+		for k := range m.actionRunViewCache {
+			if k == m.actionRunViewKey {
+				continue
+			}
+			delete(m.actionRunViewCache, k)
+			break
+		}
+	}
 }
 
 func (m *Model) isUserDefinedKeybinding(msg tea.KeyMsg) bool {

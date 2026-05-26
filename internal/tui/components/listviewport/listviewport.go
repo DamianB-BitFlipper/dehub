@@ -83,6 +83,35 @@ func (m *Model) ResetCurrItem() {
 	m.viewport.GotoTop()
 }
 
+// SetCurrItem moves the current selection to the supplied index, clamped
+// to the valid range, and adjusts the viewport to keep the new selection
+// visible. Used to preserve cursor position across model rebuilds.
+func (m *Model) SetCurrItem(idx int) {
+	if m.NumCurrentItems <= 0 {
+		m.currId = 0
+		m.topBoundId = 0
+		m.bottomBoundId = m.getNumPrsPerPage() - 1
+		m.viewport.GotoTop()
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= m.NumCurrentItems {
+		idx = m.NumCurrentItems - 1
+	}
+	m.currId = idx
+	pageSize := m.getNumPrsPerPage()
+	if pageSize < 1 {
+		pageSize = 1
+	}
+	// Position the viewport so the selected item is on the page.
+	page := idx / pageSize
+	m.topBoundId = page * pageSize
+	m.bottomBoundId = m.topBoundId + pageSize - 1
+	m.viewport.SetYOffset(m.topBoundId * m.ListItemHeight)
+}
+
 func (m *Model) GetCurrItem() int {
 	return m.currId
 }

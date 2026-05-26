@@ -893,6 +893,15 @@ func FetchAllSections(
 			oldSection := prs[i+1].(*Model)
 			sectionModel.Prs = oldSection.Prs
 			sectionModel.LastFetchTaskId = oldSection.LastFetchTaskId
+			// Preserve the user's filter / sort / cursor state so that
+			// interval refreshes don't yank the selection away.
+			sectionModel.SearchValue = oldSection.SearchValue
+			sectionModel.LocalSearchValue = oldSection.LocalSearchValue
+			sectionModel.SortOrder = oldSection.SortOrder
+			sectionModel.IsFilteredByCurrentRemote = oldSection.IsFilteredByCurrentRemote
+			sectionModel.SearchBar.SetValue(oldSection.SearchValue)
+			sectionModel.Table.SetRows(sectionModel.BuildRows())
+			sectionModel.Table.SetCurrItem(oldSection.Table.GetCurrItem())
 		}
 		if sectionConfig.Layout.AuthorIcon.Hidden != nil {
 			sectionModel.ShowAuthorIcon = !*sectionConfig.Layout.AuthorIcon.Hidden

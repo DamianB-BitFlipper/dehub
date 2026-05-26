@@ -149,11 +149,35 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 	case SectionActionsFetchedMsg:
 		if m.runsTaskId == msg.TaskId {
+			// Remember the run the user had selected (if any) so a
+			// background refresh doesn't yank their selection.
+			var prevSelectedID int64
+			if prev := m.SelectedRun(); prev != nil {
+				prevSelectedID = prev.Id
+			}
 			m.Runs = msg.Runs
 			m.sortRuns()
 			m.RunsTable.SetIsLoading(false)
-			m.RunsTable.ResetCurrItem()
 			m.RunsTable.SetRows(m.BuildRunRows())
+			// Reposition the cursor onto the same run if it still exists
+			// in the refreshed list; otherwise reset to the top.
+			if prevSelectedID != 0 {
+				filtered := m.filteredRuns()
+				idx := -1
+				for i := range filtered {
+					if filtered[i].Id == prevSelectedID {
+						idx = i
+						break
+					}
+				}
+				if idx >= 0 {
+					m.RunsTable.SetCurrItem(idx)
+				} else {
+					m.RunsTable.ResetCurrItem()
+				}
+			} else {
+				m.RunsTable.ResetCurrItem()
+			}
 			m.UpdateLastUpdated(time.Now())
 		}
 	case tasks.UpdateActionMsg:
@@ -427,16 +451,27 @@ func FetchAllSections(
 		sectionModel := NewModel(i, ctx, sectionConfig, time.Now(), time.Now())
 		// Preserve in-memory state from the previous section instance so that
 		// interval refreshes don't reset the user's selected workflow/run,
-		// local search, or sort order.
+		// local search, sort order, or focused pane.
 		if i < len(existing) && existing[i] != nil {
 			if old, ok := existing[i].(*Model); ok {
 				sectionModel.Workflows = old.Workflows
 				sectionModel.Runs = old.Runs
-				sectionModel.RunsTable.SetRows(old.RunsTable.Rows)
 				sectionModel.selectedWorkflow = old.selectedWorkflow
 				sectionModel.TotalCount = old.TotalCount
 				sectionModel.LastFetchTaskId = old.LastFetchTaskId
 				sectionModel.runsTaskId = old.runsTaskId
+				sectionModel.focusedPane = old.focusedPane
+				sectionModel.SearchValue = old.SearchValue
+				sectionModel.LocalSearchValue = old.LocalSearchValue
+				sectionModel.SortOrder = old.SortOrder
+				sectionModel.IsFilteredByCurrentRemote = old.IsFilteredByCurrentRemote
+				sectionModel.SearchBar.SetValue(old.SearchValue)
+				// Rebuild rows from the preserved data then restore the
+				// user's cursor position in both tables.
+				sectionModel.Table.SetRows(sectionModel.BuildRows())
+				sectionModel.Table.SetCurrItem(old.Table.GetCurrItem())
+				sectionModel.RunsTable.SetRows(sectionModel.BuildRunRows())
+				sectionModel.RunsTable.SetCurrItem(old.RunsTable.GetCurrItem())
 			}
 		}
 		sections = append(sections, &sectionModel)
