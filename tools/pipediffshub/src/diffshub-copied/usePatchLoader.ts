@@ -67,11 +67,13 @@ interface UsePatchLoaderResult {
   commentSections: CodeViewSavedCommentItem[];
   diffStats: CodeViewDiffStats | null;
   errorMessage: string | null;
+  getSearchItems(): readonly CodeViewItem<CommentMetadata>[];
   initialItems: CodeViewItem<CommentMetadata>[];
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
   retryLoad(): void;
+  searchItemsVersion: number;
   setCommentSections: Dispatch<SetStateAction<CodeViewSavedCommentItem[]>>;
   treeSource: CodeViewFileTreeSource | null;
   viewerKey: number;
@@ -106,6 +108,8 @@ export function usePatchLoader({
   const requestIdRef = useRef(0);
   const appliedLineHashKeyRef = useRef<string | null>(null);
   const viewerKeyRef = useRef(0);
+  const searchItemsRef = useRef<CodeViewItem<CommentMetadata>[]>([]);
+  const [searchItemsVersion, setSearchItemsVersion] = useState(0);
   // Tracks the ids of every item that has been handed to the viewer so we can
   // walk the full set when the user toggles collapse mode. The viewer handle
   // does not expose an enumeration API, so we maintain our own index.
@@ -132,6 +136,15 @@ export function usePatchLoader({
         item.collapsed = targetCollapsed;
       }
     }
+  };
+
+  const publishSearchItems = (
+    items: readonly CodeViewItem<CommentMetadata>[],
+    mode: 'replace' | 'append'
+  ): void => {
+    searchItemsRef.current =
+      mode === 'replace' ? [...items] : [...searchItemsRef.current, ...items];
+    setSearchItemsVersion((version) => version + 1);
   };
 
   const applyCollapseModeToLoaded = useStableCallback(
@@ -227,6 +240,8 @@ export function usePatchLoader({
     viewerKeyRef.current = requestId;
     appliedLineHashKeyRef.current = null;
     loadedItemIdsRef.current = new Set();
+    searchItemsRef.current = [];
+    setSearchItemsVersion((version) => version + 1);
     setViewerKey(requestId);
     setInitialItems([]);
     setTreeSource(null);
@@ -260,6 +275,7 @@ export function usePatchLoader({
           setCommentSections([]);
           setDiffStats(loadedData.diffStats);
           prepareItemsForViewer(loadedData.items);
+          publishSearchItems(loadedData.items, 'replace');
           setInitialItems(loadedData.items);
           setLoadState('ready');
           await yieldToBrowser();
@@ -334,6 +350,7 @@ export function usePatchLoader({
           lastPublishTime = performance.now();
           const pendingItems = takePendingCodeViewItems(accumulator);
           prepareItemsForViewer(pendingItems);
+          publishSearchItems(pendingItems, 'append');
           if (!hasPublishedInitialItems) {
             hasPublishedInitialItems = true;
             publishTreeSource();
@@ -513,6 +530,7 @@ export function usePatchLoader({
     commentSections,
     diffStats,
     errorMessage,
+    getSearchItems: () => searchItemsRef.current,
     initialItems,
     loadState,
     onLineLinkChange: handleLineLinkChange,
@@ -521,6 +539,7 @@ export function usePatchLoader({
     setCommentSections,
     treeSource,
     viewerKey,
+    searchItemsVersion,
   };
 }
 
