@@ -118,6 +118,67 @@ func TestReviewThreadHeaderShowsResolvedBadge(t *testing.T) {
 	require.NotContains(t, plain, "unresolved")
 }
 
+func TestToggleActivityItemsCollapsedInvalidatesActivityCache(t *testing.T) {
+	markdown.InitializeMarkdownStyle(true)
+	m := newDiffPreviewTestModel(t)
+	m.SetRow(activityTestPRWithResolvedAndStandaloneComments())
+	m.GoToActivityTab()
+
+	_ = m.renderActivity()
+	require.NotEmpty(t, m.activityCache.fingerprint)
+	require.NotEmpty(t, m.activityBodyCache)
+
+	m.ToggleActivityItemsCollapsed()
+	require.Empty(t, m.activityCache.fingerprint)
+	require.Empty(t, m.activityBodyCache)
+}
+
+func TestActivityItemsCollapsedKeepsUnresolvedThreadsExpanded(t *testing.T) {
+	markdown.InitializeMarkdownStyle(true)
+	m := newDiffPreviewTestModel(t)
+	m.SetRow(activityTestPRWithResolvedAndStandaloneComments())
+	m.GoToActivityTab()
+	m.ToggleActivityItemsCollapsed()
+
+	plain := ansi.Strip(m.renderActivity())
+	require.Contains(t, plain, "open thread body")
+	require.Contains(t, plain, "unresolved")
+}
+
+func TestActivityItemsCollapsedCompactsResolvedThreadsAndStandaloneComments(t *testing.T) {
+	markdown.InitializeMarkdownStyle(true)
+	m := newDiffPreviewTestModel(t)
+	m.SetRow(activityTestPRWithResolvedAndStandaloneComments())
+	m.GoToActivityTab()
+
+	expanded := ansi.Strip(m.renderActivity())
+	require.Contains(t, expanded, "closed thread body")
+	require.Contains(t, expanded, "standalone comment body")
+
+	m.ToggleActivityItemsCollapsed()
+	collapsed := ansi.Strip(m.renderActivity())
+	require.Contains(t, collapsed, "resolved")
+	require.Contains(t, collapsed, "standalone")
+	require.NotContains(t, collapsed, "closed thread body")
+	require.NotContains(t, collapsed, "standalone comment body")
+}
+
+func TestActivityItemsCollapsedCompactsReviewSummaries(t *testing.T) {
+	markdown.InitializeMarkdownStyle(true)
+	m := newDiffPreviewTestModel(t)
+	m.SetRow(activityTestPR())
+	m.GoToActivityTab()
+
+	expanded := ansi.Strip(m.renderActivity())
+	require.Contains(t, expanded, "reviewer reviewed")
+	require.Contains(t, expanded, "review body")
+
+	m.ToggleActivityItemsCollapsed()
+	collapsed := ansi.Strip(m.renderActivity())
+	require.Contains(t, collapsed, "reviewer reviewed")
+	require.NotContains(t, collapsed, "review body")
+}
+
 func activityTestPR() *prrow.Data {
 	updatedAt := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
 	primary := data.PullRequestData{
@@ -153,4 +214,28 @@ func activityTestPR() *prrow.Data {
 		Enriched:   enriched,
 		IsEnriched: true,
 	}
+}
+
+func activityTestPRWithResolvedAndStandaloneComments() *prrow.Data {
+	pr := activityTestPR()
+	updatedAt := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
+	pr.Enriched.ReviewThreads.Nodes[0].Comments.Nodes[0].Body = "open thread body"
+	pr.Enriched.ReviewThreads.Nodes = append(pr.Enriched.ReviewThreads.Nodes, data.ReviewThreadWithComments{
+		Id:         "thread-2",
+		Path:       "file.go",
+		Line:       24,
+		IsResolved: true,
+		Comments: data.ReviewComments{Nodes: []data.ReviewComment{{
+			Body:      "closed thread body",
+			DiffHunk:  "@@ -24,1 +24,1 @@\n-old\n+new",
+			UpdatedAt: updatedAt.Add(time.Minute),
+		}}},
+	})
+	pr.Enriched.ReviewThreads.Nodes[1].Comments.Nodes[0].Author.Login = "resolver"
+	pr.Enriched.Comments.Nodes = append(pr.Enriched.Comments.Nodes, data.Comment{
+		Body:      "standalone comment body",
+		UpdatedAt: updatedAt.Add(2 * time.Minute),
+	})
+	pr.Enriched.Comments.Nodes[0].Author.Login = "standalone"
+	return pr
 }

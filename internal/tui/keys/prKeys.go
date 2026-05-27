@@ -34,6 +34,7 @@ type PRKeyMap struct {
 	PrevStep             key.Binding
 	NextStep             key.Binding
 	ToggleReviewThread   key.Binding
+	ToggleActivityItems  key.Binding
 	ToggleSmartFiltering key.Binding
 	SortOrder            key.Binding
 	ViewIssues           key.Binding
@@ -135,6 +136,10 @@ var PRKeys = PRKeyMap{
 		key.WithKeys("z"),
 		key.WithHelp("z", "resolve/unresolve thread"),
 	),
+	ToggleActivityItems: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "collapse resolved/comments"),
+	),
 	ToggleSmartFiltering: key.NewBinding(
 		key.WithHelp("", "toggle smart filtering"),
 	),
@@ -155,6 +160,7 @@ func PRFullHelp() []key.Binding {
 			previewBindings,
 			PRKeys.PrevReviewThread,
 			PRKeys.NextReviewThread,
+			PRKeys.ToggleActivityItems,
 			key.NewBinding(
 				key.WithKeys(PRKeys.SummaryViewMore.Keys()...),
 				key.WithHelp(PRKeys.SummaryViewMore.Help().Key, "expand/collapse snippets"),
@@ -293,6 +299,8 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.NextStep
 		case "toggleReviewThread":
 			key = &PRKeys.ToggleReviewThread
+		case "toggleActivityItems":
+			key = &PRKeys.ToggleActivityItems
 		case "toggleSmartFiltering":
 			key = &PRKeys.ToggleSmartFiltering
 		case "sortOrder":

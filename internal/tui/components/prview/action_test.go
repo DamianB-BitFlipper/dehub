@@ -65,6 +65,7 @@ func TestMsgToActionReturnsCorrectActions(t *testing.T) {
 		{"previous step key", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}, PRActionPrevStep},
 		{"next step key", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl}, PRActionNextStep},
 		{"toggle review thread key", tea.KeyPressMsg{Code: 'z'}, PRActionToggleReviewThread},
+		{"toggle activity items key", tea.KeyPressMsg{Code: 't'}, PRActionToggleActivityItems},
 	}
 
 	for _, tc := range testCases {

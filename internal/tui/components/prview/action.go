@@ -31,6 +31,7 @@ const (
 	PRActionPrevStep
 	PRActionNextStep
 	PRActionToggleReviewThread
+	PRActionToggleActivityItems
 )
 
 // PRAction represents an action to be performed on a PR.
@@ -84,6 +85,8 @@ func MsgToAction(msg tea.Msg) *PRAction {
 		return &PRAction{Type: PRActionNextStep}
 	case key.Matches(keyMsg, keys.PRKeys.ToggleReviewThread):
 		return &PRAction{Type: PRActionToggleReviewThread}
+	case key.Matches(keyMsg, keys.PRKeys.ToggleActivityItems):
+		return &PRAction{Type: PRActionToggleActivityItems}
 	}
 
 	return nil

@@ -280,6 +280,7 @@ func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, PRKeys.NextReviewThread, ".")
 	requireKeys(t, PRKeys.PrevStep, "ctrl+,")
 	requireKeys(t, PRKeys.NextStep, "ctrl+.")
+	requireKeys(t, PRKeys.ToggleActivityItems, "t")
 	requireKeys(t, Keys.Refresh, "R")
 	requireKeys(t, PRKeys.RequestReview, "r")
 	requireKeys(t, PRKeys.SortOrder, "S")

@@ -20,17 +20,21 @@ import (
 type cachedActivity struct {
 	UpdatedAt      time.Time
 	RenderedString string
+	CompactCard    string
 	RenderedCard   string
 	FocusTarget    int
 	Thread         *cachedReviewThread
 }
 
 type cachedReviewThread struct {
-	UnfocusedCard string
-	FocusedCard   string
-	Header        string
-	Body          string
-	Width         int
+	UnfocusedCard      string
+	FocusedCard        string
+	CompactCard        string
+	FocusedCompactCard string
+	Header             string
+	Body               string
+	Width              int
+	IsResolved         bool
 }
 
 func (m *Model) renderActivity() string {
@@ -174,6 +178,7 @@ func (m *Model) buildCachedActivities(markdownRenderer glamour.TermRenderer) []c
 		activities = append(activities, cachedActivity{
 			UpdatedAt:      comment.UpdatedAt,
 			RenderedString: renderedComment,
+			CompactCard:    m.renderCompactComment(comment),
 			FocusTarget:    unfocusedActivity,
 		})
 	}
@@ -187,6 +192,11 @@ func (m *Model) buildCachedActivities(markdownRenderer glamour.TermRenderer) []c
 		activities = append(activities, cachedActivity{
 			UpdatedAt:   review.UpdatedAt,
 			FocusTarget: unfocusedActivity,
+			CompactCard: m.renderCompactActivityCard(
+				m.getIndentedContentWidth(),
+				m.reviewBorderColor(review.State),
+				header,
+			),
 			RenderedCard: m.renderActivityCard(
 				m.getIndentedContentWidth(),
 				m.reviewBorderColor(review.State),
@@ -205,6 +215,12 @@ func (m *Model) buildCachedActivities(markdownRenderer glamour.TermRenderer) []c
 func (m *Model) renderCachedActivity(activity cachedActivity) string {
 	if activity.Thread != nil {
 		thread := activity.Thread
+		if m.activityItemsCollapsed && thread.IsResolved && m.editor.Mode() != cmpcontroller.ModeThreadComment {
+			if activity.FocusTarget == m.focusedThread {
+				return thread.FocusedCompactCard
+			}
+			return thread.CompactCard
+		}
 		body := thread.Body
 		if activity.FocusTarget == m.focusedThread {
 			if m.editor.Mode() == cmpcontroller.ModeThreadComment {
@@ -222,6 +238,10 @@ func (m *Model) renderCachedActivity(activity cachedActivity) string {
 		return thread.UnfocusedCard
 	}
 
+	if m.activityItemsCollapsed && activity.CompactCard != "" {
+		return activity.CompactCard
+	}
+
 	if activity.RenderedCard != "" {
 		return activity.RenderedCard
 	}
@@ -233,7 +253,7 @@ func (m *Model) activityBodyCacheKey(fingerprint string) (string, bool) {
 	if m.editor.Mode() != cmpcontroller.ModeNone {
 		return "", false
 	}
-	return fmt.Sprintf("%s|focus:%d", fingerprint, m.focusedThread), true
+	return fmt.Sprintf("%s|focus:%d|collapsed:%t", fingerprint, m.focusedThread, m.activityItemsCollapsed), true
 }
 
 func (m *Model) cachedActivityFocusTargets(activities []cachedActivity) []int {
@@ -414,11 +434,14 @@ func (m *Model) cacheReviewThread(
 
 	body := lipgloss.JoinVertical(lipgloss.Left, renderedComments...)
 	return cachedReviewThread{
-		UnfocusedCard: m.renderActivityCard(width, m.ctx.Theme.SecondaryBorder, header, body),
-		FocusedCard:   m.renderActivityCard(width, m.ctx.Theme.WarningText, focusedHeader, body),
-		Header:        focusedHeader,
-		Body:          body,
-		Width:         width,
+		UnfocusedCard:      m.renderActivityCard(width, m.ctx.Theme.SecondaryBorder, header, body),
+		FocusedCard:        m.renderActivityCard(width, m.ctx.Theme.WarningText, focusedHeader, body),
+		CompactCard:        m.renderCompactActivityCard(width, m.ctx.Theme.SecondaryBorder, header),
+		FocusedCompactCard: m.renderCompactActivityCard(width, m.ctx.Theme.WarningText, focusedHeader),
+		Header:             focusedHeader,
+		Body:               body,
+		Width:              width,
+		IsResolved:         thread.IsResolved,
 	}, nil
 }
 
@@ -507,6 +530,33 @@ func (m *Model) renderThreadComment(
 	body := lineCleanupRegex.ReplaceAllString(comment.Body, "")
 	body, err := markdownRenderer.Render(body)
 	return lipgloss.JoinVertical(lipgloss.Left, header, body), err
+}
+
+func (m *Model) renderCompactComment(comment comment) string {
+	width := m.getIndentedContentWidth()
+	header := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		m.ctx.Styles.Common.CommentGlyph,
+		" ",
+		m.ctx.Styles.Common.MainTextStyle.Render(comment.Author),
+		" ",
+		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(utils.TimeElapsed(comment.UpdatedAt)),
+	)
+	return m.renderCompactActivityCard(width, m.ctx.Theme.SecondaryBorder, header)
+}
+
+func (m *Model) renderCompactActivityCard(
+	width int,
+	border compat.AdaptiveColor,
+	header string,
+) string {
+	return lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Padding(0, 1).
+		MarginBottom(1).
+		Render(header)
 }
 
 func joinMetadata(items []string) string {

@@ -48,6 +48,7 @@ type Model struct {
 	activityBodyCache        map[string]string
 	reviewDiffCache          map[string][]reviewDiffLine
 	activitySnippetsExpanded bool
+	activityItemsCollapsed   bool
 	actionChecks             *actionview.Model
 	actionChecksKey          string
 	// actionChecksCache stashes the Checks-tab embedded actionview keyed
@@ -699,6 +700,7 @@ func (m *Model) SetRow(d *prrow.Data) {
 	if newPR {
 		m.FocusNewComment()
 		m.activitySnippetsExpanded = false
+		m.activityItemsCollapsed = false
 		m.invalidateActivityCache()
 		// Cache the outgoing PR's Checks-tab actionview keyed by its
 		// repo#number so returning to that PR (within the cache cap)
@@ -1276,6 +1278,11 @@ func (m *Model) SetSummaryViewLess() {
 
 func (m *Model) ToggleActivitySnippetsExpanded() {
 	m.activitySnippetsExpanded = !m.activitySnippetsExpanded
+	m.invalidateActivityCache()
+}
+
+func (m *Model) ToggleActivityItemsCollapsed() {
+	m.activityItemsCollapsed = !m.activityItemsCollapsed
 	m.invalidateActivityCache()
 }
 

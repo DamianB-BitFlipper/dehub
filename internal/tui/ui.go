@@ -674,6 +674,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.prView.ToggleFocusedReviewThreadResolved()
 
+			case key.Matches(msg, keys.PRKeys.ToggleActivityItems):
+				if !m.prView.IsActivityTab() {
+					return m, nil
+				}
+				m.prView.ToggleActivityItemsCollapsed()
+				m.syncSidebar()
+				return m, nil
+
 			case key.Matches(msg, keys.PRKeys.CopyBranch):
 				pr, ok := currRowData.(*prrow.Data)
 				if !ok || pr == nil || pr.Primary == nil {
@@ -952,6 +960,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								return m, nil
 							}
 							return m, m.prView.ToggleFocusedReviewThreadResolved()
+
+						case prview.PRActionToggleActivityItems:
+							if !m.prView.IsActivityTab() {
+								return m, nil
+							}
+							m.prView.ToggleActivityItemsCollapsed()
+							m.syncSidebar()
+							return m, nil
 
 						case prview.PRActionPrevReviewThread, prview.PRActionNextReviewThread:
 							// On the Checks tab, , / . are forwarded to
