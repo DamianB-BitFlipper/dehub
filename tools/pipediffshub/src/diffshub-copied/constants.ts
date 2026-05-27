@@ -19,7 +19,7 @@ export const CODE_VIEW_CUSTOM_CSS = `
   min-height: calc(1lh + var(--diffs-gap-block, var(--diffs-gap-fallback)) * 3);
   z-index: 2;
   display: flex;
-  position: relative;
+  position: sticky;
   top: 0;
 }
 

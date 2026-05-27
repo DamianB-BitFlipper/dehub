@@ -2137,7 +2137,7 @@ ${t}`,i=e.startsWith(t)?0:Zw(e,n,0);if(i===-1)return[e];const a=[];i>0&&a.push(e
   min-height: calc(1lh + var(--diffs-gap-block, var(--diffs-gap-fallback)) * 3);
   z-index: 2;
   display: flex;
-  position: relative;
+  position: sticky;
   top: 0;
 }
 
