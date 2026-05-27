@@ -203,6 +203,7 @@ type Search interface {
 	SetIsLocalSearching(val bool) tea.Cmd
 	IsLocalSearchFocused() bool
 	ViewCompletions() string
+	HeaderSearchView() string
 	ResetFilters()
 	GetFilters() string
 	ResetPageInfo()
@@ -217,13 +218,36 @@ type PromptConfirmation interface {
 }
 
 func (m *BaseModel) GetDimensions() constants.Dimensions {
+	height := m.Ctx.MainContentHeight
+	if m.bodySearchVisible() {
+		height -= common.SearchHeight
+	}
 	return constants.Dimensions{
 		Width: max(
 			0,
 			m.Ctx.MainContentWidth-m.Ctx.Styles.Section.ContainerStyle.GetHorizontalPadding(),
 		),
-		Height: max(0, m.Ctx.MainContentHeight-common.SearchHeight),
+		Height: max(0, height),
 	}
+}
+
+func (m *BaseModel) localSearchVisible() bool {
+	return m.IsLocalSearching || m.LocalSearchValue != ""
+}
+
+func (m *BaseModel) bodySearchVisible() bool {
+	return m.localSearchVisible() || m.IsSearching
+}
+
+func (m *BaseModel) syncTableDimensions() {
+	if m.Ctx == nil {
+		return
+	}
+	newDimensions := m.GetDimensions()
+	m.Table.SetDimensions(constants.Dimensions{
+		Height: max(0, newDimensions.Height-2),
+		Width:  max(0, newDimensions.Width),
+	})
 }
 
 func (m *BaseModel) GetConfig() config.SectionConfig {
@@ -311,12 +335,7 @@ func (m *BaseModel) enrichSearchWithTemplateVars() string {
 
 func (m *BaseModel) UpdateProgramContext(ctx *context.ProgramContext) {
 	m.Ctx = ctx
-	newDimensions := m.GetDimensions()
-	tableDimensions := constants.Dimensions{
-		Height: max(0, newDimensions.Height-2),
-		Width:  max(0, newDimensions.Width),
-	}
-	m.Table.SetDimensions(tableDimensions)
+	m.syncTableDimensions()
 	m.Table.UpdateProgramContext(ctx)
 	m.Table.SyncViewPortContent()
 	m.SearchBar.UpdateProgramContext(ctx)
@@ -398,6 +417,7 @@ func (m *BaseModel) SetIsSearching(val bool) tea.Cmd {
 
 func (m *BaseModel) SetIsLocalSearching(val bool) tea.Cmd {
 	m.IsLocalSearching = val
+	defer m.syncTableDimensions()
 	if val {
 		cmds := make([]tea.Cmd, 0)
 		cmd := m.LocalSearchBar.Focus()
@@ -443,10 +463,18 @@ func (m *BaseModel) ResetFilters() {
 	m.SearchBar.SetValue(m.GetSearchValue())
 	m.LocalSearchBar.SetValue("")
 	m.LocalSearchValue = ""
+	m.syncTableDimensions()
 }
 
 func (m *BaseModel) ViewCompletions() string {
 	return m.SearchBar.ViewCompletions()
+}
+
+// HeaderSearchView intentionally returns no search input. Search inputs are
+// scoped to the active section body so they do not escape into the tabs row or
+// preview/sidebar zones.
+func (m *BaseModel) HeaderSearchView() string {
+	return ""
 }
 
 func (m *BaseModel) ResetPageInfo() {
@@ -555,19 +583,32 @@ func (m *BaseModel) GetMainContent() string {
 }
 
 func (m *BaseModel) View() string {
-	search := m.SearchBar.View(m.Ctx)
-	if m.IsLocalSearching || m.LocalSearchValue != "" {
-		search = m.LocalSearchBar.View(m.Ctx)
+	if m.localSearchVisible() {
+		return m.Ctx.Styles.Section.ContainerStyle.
+			Width(m.Ctx.MainContentWidth).
+			Render(
+				lipgloss.JoinVertical(
+					lipgloss.Left,
+					m.LocalSearchBar.View(m.Ctx),
+					m.GetMainContent(),
+				),
+			)
 	}
+	if m.IsSearching {
+		return m.Ctx.Styles.Section.ContainerStyle.
+			Width(m.Ctx.MainContentWidth).
+			Render(
+				lipgloss.JoinVertical(
+					lipgloss.Left,
+					m.SearchBar.View(m.Ctx),
+					m.GetMainContent(),
+				),
+			)
+	}
+
 	return m.Ctx.Styles.Section.ContainerStyle.
 		Width(m.Ctx.MainContentWidth).
-		Render(
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				search,
-				m.GetMainContent(),
-			),
-		)
+		Render(m.GetMainContent())
 }
 
 func (m *BaseModel) ResetRows() {

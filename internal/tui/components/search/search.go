@@ -117,6 +117,13 @@ func (m Model) view(ctx *context.ProgramContext, focusedBorder color.Color) stri
 	return s.Render(m.cmpctl.View())
 }
 
+// ViewInline returns the raw input view without the surrounding rounded
+// border so the caller can place the search field inside another row (for
+// example, on the tabs row beside the section tabs).
+func (m Model) ViewInline() string {
+	return m.cmpctl.View()
+}
+
 func (m Model) ViewCompletions() string {
 	if m.disableCompletions {
 		return ""

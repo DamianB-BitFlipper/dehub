@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/stretchr/testify/require"
 
@@ -509,4 +510,102 @@ func TestViewRendersAtMainContentWidth(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLocalSearchRendersInSectionBodyNotHeader(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../../../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	thm := theme.ParseTheme(&cfg)
+	styles := context.InitStyles(thm)
+	ctx := &context.ProgramContext{
+		Config:            &cfg,
+		MainContentWidth:  80,
+		MainContentHeight: 20,
+		Theme:             thm,
+		Styles:            styles,
+	}
+	m := BaseModel{
+		Ctx: ctx,
+		SearchBar: search.NewModel(ctx, search.SearchOptions{
+			Prefix:       "is:pr",
+			InitialValue: "is:open",
+		}),
+		LocalSearchBar: search.NewModel(ctx, search.SearchOptions{
+			Prefix:             "local",
+			Placeholder:        "filter loaded rows",
+			DisableCompletions: true,
+		}),
+		IsLocalSearching: true,
+		LocalSearchValue: "sandbox",
+		Table: table.NewModel(
+			*ctx,
+			constants.Dimensions{Width: 80, Height: 10},
+			time.Now(),
+			time.Now(),
+			nil,
+			nil,
+			"pr",
+			nil,
+			"Loading...",
+			false,
+		),
+	}
+	m.LocalSearchBar.SetValue("sandbox")
+
+	require.Empty(t, m.HeaderSearchView())
+	view := ansi.Strip(m.View())
+	require.Contains(t, view, "local")
+	require.Contains(t, view, "sandbox")
+}
+
+func TestGlobalSearchRendersInSectionBodyNotHeader(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../../../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	thm := theme.ParseTheme(&cfg)
+	styles := context.InitStyles(thm)
+	ctx := &context.ProgramContext{
+		Config:            &cfg,
+		MainContentWidth:  80,
+		MainContentHeight: 20,
+		Theme:             thm,
+		Styles:            styles,
+	}
+	m := BaseModel{
+		Ctx: ctx,
+		SearchBar: search.NewModel(ctx, search.SearchOptions{
+			Prefix:       "is:pr",
+			InitialValue: "archived:false",
+		}),
+		LocalSearchBar: search.NewModel(ctx, search.SearchOptions{
+			Prefix:             "local",
+			Placeholder:        "filter loaded rows",
+			DisableCompletions: true,
+		}),
+		IsSearching: true,
+		Table: table.NewModel(
+			*ctx,
+			constants.Dimensions{Width: 80, Height: 10},
+			time.Now(),
+			time.Now(),
+			nil,
+			nil,
+			"pr",
+			nil,
+			"Loading...",
+			false,
+		),
+	}
+
+	require.Empty(t, m.HeaderSearchView())
+	view := ansi.Strip(m.View())
+	require.Contains(t, view, "is:pr")
+	require.Contains(t, view, "archived:false")
 }

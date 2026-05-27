@@ -1,7 +1,13 @@
 package tabs
 
 import (
+	"strings"
+	"testing"
+
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/stretchr/testify/require"
 
 	// "charm.land/x/exp/teatest"
 
@@ -9,7 +15,68 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tabs/testdata"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
+
+func TestViewSectionTabsDoesNotExceedAvailableWidth(t *testing.T) {
+	ctx := newTabsTestContext(t)
+	m := NewModel(ctx)
+	m.SetSections([]section.Section{
+		&testdata.TestSection{Config: config.SectionConfig{Title: ""}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "platform"}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "iac"}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "prime"}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "My Pull Requests"}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "Needs My Review"}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "Involved"}},
+	})
+	m.SetCurrSectionId(1)
+
+	view := m.viewSectionTabs(50)
+	plain := ansi.Strip(view)
+
+	require.NotContains(t, view, "\n")
+	require.LessOrEqual(t, lipgloss.Width(view), 50)
+	require.Less(t, strings.Index(plain, ""), strings.Index(plain, "platform"))
+}
+
+func TestViewSectionTabsReservesWidthForInlineSearch(t *testing.T) {
+	ctx := newTabsTestContext(t)
+	m := NewModel(ctx)
+	m.SetSections([]section.Section{
+		&testdata.TestSection{Config: config.SectionConfig{Title: ""}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "platform"}, HeaderSearch: " repo:owner/repo is:open"},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "Very Long Section Name"}},
+		&testdata.TestSection{Config: config.SectionConfig{Title: "Another Long Section Name"}},
+	})
+	m.SetCurrSectionId(1)
+
+	view := m.viewSectionTabs(55)
+	plain := ansi.Strip(view)
+
+	require.NotContains(t, view, "\n")
+	require.LessOrEqual(t, lipgloss.Width(view), 55)
+	require.True(t, strings.Contains(plain, "repo:owner/repo"))
+	require.Less(t, strings.Index(plain, "repo:owner/repo"), strings.Index(plain, "platform"))
+}
+
+func newTabsTestContext(t *testing.T) *context.ProgramContext {
+	t.Helper()
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../../../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+	thm := theme.ParseTheme(&cfg)
+	return &context.ProgramContext{
+		Config:       &cfg,
+		ScreenWidth:  80,
+		ScreenHeight: 30,
+		Theme:        thm,
+		Styles:       context.InitStyles(thm),
+		View:         config.PRsView,
+	}
+}
 
 // func TestTabs(t *testing.T) {
 // 	t.Parallel()

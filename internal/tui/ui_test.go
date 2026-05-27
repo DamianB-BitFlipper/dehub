@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	// "charm.land/x/exp/teatest"
 
@@ -1171,6 +1172,109 @@ func TestChecksLogsSearchReceivesTypingBeforeMainLocalSearch(t *testing.T) {
 	require.False(t, prSection.IsLocalSearchFocused(), "typing into logs search should not trigger main local search")
 }
 
+func TestOpenPRURLPopupSearchesPRSearchSection(t *testing.T) {
+	origFetch := fetchPullRequestByNumberForOpenURL
+	fetchPullRequestByNumberForOpenURL = func(owner, repo string, number int) (data.PullRequestData, error) {
+		require.Equal(t, "PrimeIntellect-ai", owner)
+		require.Equal(t, "platform", repo)
+		require.Equal(t, 2539, number)
+		return data.PullRequestData{
+			Number:    2539,
+			Title:     "exact PR",
+			Url:       "https://github.com/PrimeIntellect-ai/platform/pull/2539",
+			State:     "OPEN",
+			UpdatedAt: time.Now(),
+			CreatedAt: time.Now(),
+			Repository: data.Repository{
+				NameWithOwner: "PrimeIntellect-ai/platform",
+			},
+		}, nil
+	}
+	defer func() { fetchPullRequestByNumberForOpenURL = origFetch }()
+
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config:            &cfg,
+		View:              config.PRsView,
+		MainContentHeight: 20,
+		StartTask:         func(task context.Task) tea.Cmd { return nil },
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	searchSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{Filters: "archived:false"}, time.Now(), time.Now())
+	searchSection.Prs = append(searchSection.Prs, prrow.Data{
+		Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1"),
+	})
+	searchSection.Table.SetRows(searchSection.BuildRows())
+
+	configuredSection := prssection.NewModel(1, ctx, config.PrsSectionConfig{Filters: "author:@me"}, time.Now(), time.Now())
+
+	m := Model{
+		ctx:                ctx,
+		keys:               keys.Keys,
+		prs:                []section.Section{&searchSection, &configuredSection},
+		currSectionId:      1,
+		prView:             prview.NewModel(ctx),
+		issueSidebar:       issueview.NewModel(ctx),
+		notificationView:   notificationview.NewModel(ctx),
+		footer:             footer.NewModel(ctx),
+		sidebar:            sidebar.NewModel(),
+		activePane:         mainPane,
+		prPreviewStates:    map[string]map[int]int{},
+		issuePreviewStates: map[string]int{},
+	}
+	m.ctx.ActivePane = "main"
+	m.prView.UpdateProgramContext(ctx)
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "O", Code: 'O'})
+	m = next.(Model)
+	require.NotNil(t, cmd)
+
+	activeSection := m.prs[1].(*prssection.Model)
+	require.NotNil(t, m.openPRURLPopup)
+	require.False(t, activeSection.IsPromptConfirmationFocused())
+	popup := m.renderOpenPRURLPopup()
+	require.Contains(t, popup, "Open PR URL")
+	popupWidth := lipgloss.Width(popup)
+	for _, line := range strings.Split(popup, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), popupWidth)
+	}
+
+	next, _ = m.Update(tea.PasteMsg{Content: "https://github.com/PrimeIntellect-ai/platform/pull/2539"})
+	m = next.(Model)
+	require.Equal(t, "https://github.com/PrimeIntellect-ai/platform/pull/2539", m.openPRURLPopup.input.Value())
+
+	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	require.NotNil(t, cmd)
+
+	updatedSearch := m.prs[0].(*prssection.Model)
+	require.Equal(t, 0, m.currSectionId)
+	require.Equal(t, "repo:PrimeIntellect-ai/platform number:2539", updatedSearch.SearchValue)
+	require.Equal(t, "repo:PrimeIntellect-ai/platform number:2539", updatedSearch.SearchBar.Value())
+	require.False(t, updatedSearch.IsFilteredByCurrentRemote)
+	require.Nil(t, updatedSearch.Table.Rows)
+	require.True(t, updatedSearch.GetIsLoading())
+	require.Nil(t, m.openPRURLPopup)
+
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+
+	updatedSearch = m.prs[0].(*prssection.Model)
+	require.False(t, updatedSearch.GetIsLoading())
+	require.Equal(t, 1, updatedSearch.TotalCount)
+	require.Len(t, updatedSearch.Prs, 1)
+	require.Equal(t, 2539, updatedSearch.Prs[0].Primary.Number)
+	require.Equal(t, "exact PR", updatedSearch.Prs[0].Primary.Title)
+	require.Equal(t, 1, updatedSearch.NumRows())
+}
+
 // TestLocalSearchExitsOnVerticalNavKeys verifies that pressing
 // Up/Down/PgUp/PgDn while the local row-filter search is focused exits
 // the search AND moves the row cursor in the same press. The previous
@@ -1321,7 +1425,8 @@ func TestLocalSearchTypingNotExitedByLetterKeys(t *testing.T) {
 	ctx.Styles = context.InitStyles(ctx.Theme)
 
 	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
-	prSection.Prs = append(prSection.Prs,
+	prSection.Prs = append(
+		prSection.Prs,
 		prrow.Data{Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1")},
 		prrow.Data{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
 	)
@@ -2287,14 +2392,14 @@ func TestOpenPRCommentInputNoScrollPreservesSidebarOffset(t *testing.T) {
 	prViewModel.UpdateProgramContext(ctx)
 
 	m := Model{
-		ctx:           ctx,
-		keys:          keys.Keys,
-		prs:           []section.Section{&prSection},
-		sidebar:       sidebarModel,
-		footer:        footer.NewModel(ctx),
-		tabs:          tabs.NewModel(ctx),
-		prView:        prViewModel,
-		issueSidebar:  issueview.NewModel(ctx),
+		ctx:          ctx,
+		keys:         keys.Keys,
+		prs:          []section.Section{&prSection},
+		sidebar:      sidebarModel,
+		footer:       footer.NewModel(ctx),
+		tabs:         tabs.NewModel(ctx),
+		prView:       prViewModel,
+		issueSidebar: issueview.NewModel(ctx),
 	}
 	m.prView.GoToActivityTab()
 	m.prView.SetRow(&pr)

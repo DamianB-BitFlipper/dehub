@@ -563,6 +563,35 @@ func FetchPullRequests(
 	}, nil
 }
 
+func FetchPullRequestByNumber(owner, repo string, number int) (PullRequestData, error) {
+	var err error
+	if client == nil {
+		client, err = gh.DefaultGraphQLClient()
+		if err != nil {
+			return PullRequestData{}, err
+		}
+	}
+
+	var queryResult struct {
+		Repository struct {
+			PullRequest PullRequestData `graphql:"pullRequest(number: $number)"`
+		} `graphql:"repository(owner: $owner, name: $repo)"`
+	}
+	variables := map[string]any{
+		"owner":  graphql.String(owner),
+		"repo":   graphql.String(repo),
+		"number": graphql.Int(number),
+	}
+	log.Debug("Fetching PR by number", "owner", owner, "repo", repo, "number", number)
+	err = client.Query("FetchPullRequestByNumber", &queryResult, variables)
+	if err != nil {
+		return PullRequestData{}, err
+	}
+	log.Info("Successfully fetched PR by number", "owner", owner, "repo", repo, "number", number)
+
+	return queryResult.Repository.PullRequest, nil
+}
+
 func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 	var err error
 	if client == nil {

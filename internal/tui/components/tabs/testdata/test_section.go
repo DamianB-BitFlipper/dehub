@@ -11,8 +11,9 @@ import (
 )
 
 type TestSection struct {
-	Config  config.SectionConfig
-	loading bool
+	Config       config.SectionConfig
+	HeaderSearch string
+	loading      bool
 }
 
 // BuildRows implements section.Section.
@@ -199,4 +200,9 @@ func (t *TestSection) View() string {
 // View implements section.Section.
 func (t *TestSection) ViewCompletions() string {
 	panic("unimplemented")
+}
+
+// HeaderSearchView implements section.Section.
+func (t *TestSection) HeaderSearchView() string {
+	return t.HeaderSearch
 }

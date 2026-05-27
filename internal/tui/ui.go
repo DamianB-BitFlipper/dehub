@@ -80,6 +80,7 @@ type Model struct {
 	copySelection      copySelectionModel
 	messagePopup       *messagePopup
 	mergePRPopup       *mergePRPopup
+	openPRURLPopup     *openPRURLPopup
 	visibleRefreshes   map[string]int
 	visibleRefreshGen  int
 	repoBranches       map[string]repoBranchesState
@@ -91,6 +92,14 @@ type Model struct {
 	// reports sidebarOpen=false because the Actions view manages its own
 	// three-pane layout and does not consume the global sidebar.
 	viewStates map[config.ViewType]*viewState
+}
+
+var fetchPullRequestByNumberForOpenURL = data.FetchPullRequestByNumber
+
+type openPRURLFetchedMsg struct {
+	Ref githubPRRef
+	PR  data.PullRequestData
+	Err error
 }
 
 type viewState struct {
@@ -230,6 +239,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		view, actionCmd := m.actionRunView.UpdateEmbedded(msg)
 		m.actionRunView = &view
 		return m, actionCmd
+	}
+	if m.openPRURLPopup != nil {
+		return m, m.updateOpenPRURLPopup(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -570,6 +582,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case m.ctx.View == config.PRsView:
 			switch {
+			case key.Matches(msg, keys.PRKeys.OpenURL):
+				return m, m.openPRURLPopupForInput()
+
 			case key.Matches(msg, keys.PRKeys.Create):
 				var err error
 				prSection, ok := currSection.(*prssection.Model)
@@ -774,7 +789,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// pane-switch keys (ctrl+left/ctrl+right) actually reach this
 			// case. Captured in debug.log when the app is run with --debug.
 			if as, ok := currSection.(*actionssection.Model); ok && as != nil {
-				log.Debug("actions view key",
+				log.Debug(
+					"actions view key",
 					"key", msg.String(),
 					"focusedPane", as.FocusedPane(),
 					"matchesNext", key.Matches(msg, keys.ActionsKeys.FocusNextPane),
@@ -1426,6 +1442,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case constants.ErrMsg:
 		m.messagePopup = newErrorMessagePopup(msg.Err)
+
+	case openPRURLFetchedMsg:
+		cmds = append(cmds, m.applyOpenPRURLFetchedMsg(msg))
 	}
 
 	m.syncProgramContext()
@@ -1584,6 +1603,11 @@ func (m Model) View() tea.View {
 			Y(max(0, (m.ctx.ScreenHeight-lipgloss.Height(popup))/2)))
 	}
 	if popup := m.renderMergePRPopup(); popup != "" {
+		layers = append(layers, lipgloss.NewLayer(popup).
+			X(max(0, (m.ctx.ScreenWidth-lipgloss.Width(popup))/2)).
+			Y(max(0, (m.ctx.ScreenHeight-lipgloss.Height(popup))/2)))
+	}
+	if popup := m.renderOpenPRURLPopup(); popup != "" {
 		layers = append(layers, lipgloss.NewLayer(popup).
 			X(max(0, (m.ctx.ScreenWidth-lipgloss.Width(popup))/2)).
 			Y(max(0, (m.ctx.ScreenHeight-lipgloss.Height(popup))/2)))
@@ -2499,6 +2523,60 @@ func (m *Model) promptConfirmation(currSection section.Section, action string) t
 		return currSection.SetIsPromptConfirmationShown(true)
 	}
 	return nil
+}
+
+func (m *Model) openPRURLInSearchSection(ref githubPRRef) []tea.Cmd {
+	if len(m.prs) == 0 || m.prs[0] == nil {
+		return []tea.Cmd{m.notifyErr("PR search section is unavailable")}
+	}
+
+	searchSection, ok := m.prs[0].(*prssection.Model)
+	if !ok || searchSection == nil {
+		return []tea.Cmd{m.notifyErr("PR search section is unavailable")}
+	}
+
+	query := ref.searchQuery()
+	searchSection.SearchValue = query
+	searchSection.SearchBar.SetValue(query)
+	searchSection.SyncSmartFilterWithSearchValue()
+	searchSection.SetIsSearching(false)
+	searchSection.SetIsLocalSearching(false)
+	searchSection.ResetRows()
+	searchSection.SetIsLoading(true)
+	m.setCurrSectionId(0)
+	m.syncSidebar()
+
+	return []tea.Cmd{func() tea.Msg {
+		pr, err := fetchPullRequestByNumberForOpenURL(ref.Owner, ref.Repo, ref.Number)
+		if err != nil {
+			return openPRURLFetchedMsg{Ref: ref, Err: err}
+		}
+		return openPRURLFetchedMsg{Ref: ref, PR: pr}
+	}}
+}
+
+func (m *Model) applyOpenPRURLFetchedMsg(msg openPRURLFetchedMsg) tea.Cmd {
+	if len(m.prs) == 0 || m.prs[0] == nil {
+		return m.notifyErr("PR search section is unavailable")
+	}
+
+	searchSection, ok := m.prs[0].(*prssection.Model)
+	if !ok || searchSection == nil {
+		return m.notifyErr("PR search section is unavailable")
+	}
+
+	searchSection.SetIsLoading(false)
+	if msg.Err != nil {
+		return m.notifyErr(fmt.Sprintf("Failed opening PR URL: %v", msg.Err))
+	}
+
+	searchSection.Prs = []prrow.Data{{Primary: &msg.PR}}
+	searchSection.TotalCount = 1
+	searchSection.PageInfo = &data.PageInfo{HasNextPage: false}
+	searchSection.Table.SetRows(searchSection.BuildRows())
+	searchSection.Table.UpdateLastUpdated(time.Now())
+	searchSection.UpdateTotalItemsCount(1)
+	return m.onViewedRowChanged()
 }
 
 func prOpenCloseAction(row any) string {

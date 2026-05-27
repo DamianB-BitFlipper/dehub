@@ -27,6 +27,7 @@ type PRKeyMap struct {
 	Reopen               key.Binding
 	Merge                key.Binding
 	Update               key.Binding
+	OpenURL              key.Binding
 	ApproveWorkflows     key.Binding
 	PrevReviewThread     key.Binding
 	NextReviewThread     key.Binding
@@ -105,6 +106,10 @@ var PRKeys = PRKeyMap{
 	Update: key.NewBinding(
 		key.WithKeys("u"),
 		key.WithHelp("u", "edit PR"),
+	),
+	OpenURL: key.NewBinding(
+		key.WithKeys("O"),
+		key.WithHelp("O", "open PR URL"),
 	),
 	ApproveWorkflows: key.NewBinding(
 		key.WithKeys("V"),
@@ -203,6 +208,7 @@ func PRFullHelp() []key.Binding {
 		PRKeys.Reopen,
 		PRKeys.Merge,
 		PRKeys.Update,
+		PRKeys.OpenURL,
 		PRKeys.ApproveWorkflows,
 	)
 	bindings = append(bindings, previewBindings...)
@@ -274,6 +280,8 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.Merge
 		case "update":
 			key = &PRKeys.Update
+		case "openPrUrl":
+			key = &PRKeys.OpenURL
 		case "approveWorkflows":
 			key = &PRKeys.ApproveWorkflows
 		case "prevReviewThread":

@@ -191,6 +191,10 @@ func TestFullHelpForPRViewDoesNotIncludeNotificationKeys(t *testing.T) {
 	if !found {
 		t.Error("expected PR key 'create PR' to be present in PR view")
 	}
+	found = findKeyByHelp(allKeys, "open PR URL")
+	if !found {
+		t.Error("expected PR key 'open PR URL' to be present in PR view")
+	}
 	found = findKeyByHelp(allKeys, "watch checks")
 	if found {
 		t.Error("expected PR key 'watch checks' to be removed from PR view")
@@ -279,6 +283,7 @@ func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, Keys.Refresh, "R")
 	requireKeys(t, PRKeys.RequestReview, "r")
 	requireKeys(t, PRKeys.SortOrder, "S")
+	requireKeys(t, PRKeys.OpenURL, "O")
 	requireKeys(t, IssueKeys.SortOrder, "S")
 	requireKeys(t, ActionsKeys.SortOrder, "S")
 	requireKeys(t, ActionsKeys.Rerun, "ctrl+r")
@@ -395,6 +400,30 @@ func TestRebindPRKeys_CreatePrBuiltin(t *testing.T) {
 	}
 	if PRKeys.Create.Help().Desc != "open create PR" {
 		t.Errorf("expected help to be updated, got %q", PRKeys.Create.Help().Desc)
+	}
+}
+
+func TestRebindPRKeys_OpenPrUrlBuiltin(t *testing.T) {
+	origKeys := PRKeys.OpenURL.Keys()
+	origHelp := PRKeys.OpenURL.Help().Desc
+	defer func() {
+		PRKeys.OpenURL.SetKeys(origKeys...)
+		PRKeys.OpenURL.SetHelp(origKeys[0], origHelp)
+	}()
+
+	err := rebindPRKeys([]config.Keybinding{
+		{Builtin: "openPrUrl", Key: "P", Name: "open pasted PR"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	keys := PRKeys.OpenURL.Keys()
+	if len(keys) != 1 || keys[0] != "P" {
+		t.Errorf("expected key to be rebound to P, got %v", keys)
+	}
+	if PRKeys.OpenURL.Help().Desc != "open pasted PR" {
+		t.Errorf("expected help to be updated, got %q", PRKeys.OpenURL.Help().Desc)
 	}
 }
 
