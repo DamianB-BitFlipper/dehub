@@ -468,7 +468,6 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.rateLimit = wrMsg.rateLimit
 		if wrMsg.err != nil && wrMsg.rateLimit.Remaining == 0 {
 			log.Warn("rate limit reached, waiting", "rateLimit", wrMsg.rateLimit)
-			return m, nil
 		}
 		if wrMsg.err == nil {
 			m.checksFetched = true

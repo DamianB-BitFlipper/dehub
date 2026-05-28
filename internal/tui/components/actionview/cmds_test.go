@@ -1,6 +1,7 @@
 package actionview
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -132,6 +133,22 @@ func TestEmbeddedFlatChecksShowsLoadingBeforeFirstFetch(t *testing.T) {
 	view := m.EmbeddedView()
 	if !strings.Contains(view, "Loading checks") {
 		t.Fatalf("expected loading checks message, got %q", view)
+	}
+}
+
+func TestEmbeddedFlatChecksShowsRateLimitError(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dash", "1", ModelOpts{Flat: true, Embedded: true})
+	m.SetSize(80, 20)
+
+	err := errors.New("rate limit exceeded")
+	next, _ := m.Update(workflowRunsFetchedMsg{err: err})
+
+	view := next.EmbeddedView()
+	if strings.Contains(view, "Loading checks") {
+		t.Fatalf("expected loading checks message to stop after error, got %q", view)
+	}
+	if !strings.Contains(view, err.Error()) {
+		t.Fatalf("expected embedded view to show fetch error, got %q", view)
 	}
 }
 

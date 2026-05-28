@@ -72,7 +72,7 @@ func (m *Model) renderReviewDiffPreview(threadID string, path string, diffHunk s
 	if len(lines) == 0 {
 		return ""
 	}
-	isCollapsed := !m.activitySnippetsExpanded && len(lines) > collapsedReviewDiffPreviewLines
+	isCollapsed := !m.viewState.activitySnippetsExpanded && len(lines) > collapsedReviewDiffPreviewLines
 	renderLines := lines
 	if isCollapsed {
 		renderLines = lines[:collapsedReviewDiffPreviewLines]

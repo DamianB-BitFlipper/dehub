@@ -724,6 +724,54 @@ func TestPRPreviewPerTabScrollPreserved(t *testing.T) {
 		"Checks tab scroll should be independent of Activity tab scroll")
 }
 
+func TestPRPreviewActiveTabPreservedWithoutScrollState(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config:              &cfg,
+		View:                config.PRsView,
+		MainContentHeight:   10,
+		DynamicPreviewWidth: 80,
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+	prSection.Prs = append(
+		prSection.Prs,
+		prrow.Data{Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1")},
+		prrow.Data{Primary: testPullRequestData(2, "https://github.com/owner/repo/pull/2")},
+	)
+	prSection.Table.SetRows(prSection.BuildRows())
+
+	m := Model{
+		ctx:                ctx,
+		prs:                []section.Section{&prSection},
+		prView:             prview.NewModel(ctx),
+		sidebar:            sidebar.NewModel(),
+		prPreviewStates:    map[string]map[int]int{},
+		issuePreviewStates: map[string]int{},
+	}
+	m.prView.SetRow(&prSection.Prs[0])
+	m.prView.GoToActivityTab()
+
+	prSection.NextRow()
+	m.prView.SetRow(&prSection.Prs[1])
+	require.Equal(t, 0, m.prView.SelectedTabIndex(),
+		"new PRs should still default to Overview")
+
+	prSection.PrevRow()
+	m.prView.SetRow(&prSection.Prs[0])
+	require.True(t, m.restoreCurrentPRPreviewState(),
+		"remembered preview tab state should restore even without saved scroll")
+	require.Equal(t, 1, m.prView.SelectedTabIndex(),
+		"returning to a PR should restore the last active preview tab")
+}
+
 func TestPRPreviewTabKeysPreserveActivityScroll(t *testing.T) {
 	keys.PRKeys.PrevSidebarTab.SetKeys("left")
 	keys.PRKeys.NextSidebarTab.SetKeys("right")

@@ -2185,8 +2185,8 @@ func (m *Model) savePRPreviewStateAt(tabIndex int) {
 }
 
 // restoreCurrentPRPreviewState restores the preview state for the currently
-// selected row. For PR rows it looks up the saved scroll for the saved tab,
-// honoring the per-tab map. Returns true if any restoration happened.
+// selected row. The selected preview tab lives in prView's per-PR state, while
+// scroll offsets are tracked per URL/tab here.
 func (m *Model) restoreCurrentPRPreviewState() bool {
 	pr, ok := m.getCurrRowData().(*prrow.Data)
 	if !ok || pr == nil || pr.Primary == nil {
@@ -2197,35 +2197,16 @@ func (m *Model) restoreCurrentPRPreviewState() bool {
 	if url == "" {
 		return false
 	}
-	if tabs, ok := m.prPreviewStates[url]; ok && len(tabs) > 0 {
-		// Pick the most recently-recorded tab as the "last viewed" tab
-		// for this PR. We don't track recency explicitly; preferring the
-		// already-selected tab if it has saved state, then falling back
-		// to any saved tab, is a faithful approximation.
-		selected := m.prView.SelectedTabIndex()
-		var tabIdx int
-		var off int
-		if savedOff, hasSelected := tabs[selected]; hasSelected {
-			tabIdx, off = selected, savedOff
-		} else {
-			// Deterministic-ish: pick the lowest tab index that has saved
-			// state. The set is small (5 tabs max), so this is fine.
-			best := -1
-			for k := range tabs {
-				if best == -1 || k < best {
-					best = k
-				}
-			}
-			tabIdx, off = best, tabs[best]
-		}
-		m.prView.GoToTab(tabIdx)
-		m.syncSidebar()
-		m.sidebar.ScrollToOffset(off)
-		return true
-	}
-	m.prView.GoToFirstTab()
+	m.prView.RestoreSelectedTab()
 	m.syncSidebar()
-	return false
+	if tabs, ok := m.prPreviewStates[url]; ok && len(tabs) > 0 {
+		selected := m.prView.SelectedTabIndex()
+		if off, ok := tabs[selected]; ok {
+			m.sidebar.ScrollToOffset(off)
+			return true
+		}
+	}
+	return m.prView.HasRememberedViewState()
 }
 
 // restoreCurrentPRPreviewTab restores the saved scroll for the *currently*

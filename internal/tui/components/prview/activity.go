@@ -215,7 +215,7 @@ func (m *Model) buildCachedActivities(markdownRenderer glamour.TermRenderer) []c
 func (m *Model) renderCachedActivity(activity cachedActivity) string {
 	if activity.Thread != nil {
 		thread := activity.Thread
-		if m.activityItemsCollapsed && thread.IsResolved && m.editor.Mode() != cmpcontroller.ModeThreadComment {
+		if m.viewState.activityItemsCollapsed && thread.IsResolved && m.editor.Mode() != cmpcontroller.ModeThreadComment {
 			if activity.FocusTarget == m.focusedThread {
 				return thread.FocusedCompactCard
 			}
@@ -238,7 +238,7 @@ func (m *Model) renderCachedActivity(activity cachedActivity) string {
 		return thread.UnfocusedCard
 	}
 
-	if m.activityItemsCollapsed && activity.CompactCard != "" {
+	if m.viewState.activityItemsCollapsed && activity.CompactCard != "" {
 		return activity.CompactCard
 	}
 
@@ -253,7 +253,7 @@ func (m *Model) activityBodyCacheKey(fingerprint string) (string, bool) {
 	if m.editor.Mode() != cmpcontroller.ModeNone {
 		return "", false
 	}
-	return fmt.Sprintf("%s|focus:%d|collapsed:%t", fingerprint, m.focusedThread, m.activityItemsCollapsed), true
+	return fmt.Sprintf("%s|focus:%d|collapsed:%t", fingerprint, m.focusedThread, m.viewState.activityItemsCollapsed), true
 }
 
 func (m *Model) cachedActivityFocusTargets(activities []cachedActivity) []int {

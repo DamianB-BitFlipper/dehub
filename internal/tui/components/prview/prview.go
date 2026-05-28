@@ -24,6 +24,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/markdown"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/state"
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
 
@@ -34,28 +35,30 @@ var (
 )
 
 type Model struct {
-	ctx                      *context.ProgramContext
-	sectionId                int
-	sectionType              string
-	pr                       *prrow.PullRequest
-	width                    int
-	carousel                 carousel.Model
-	editor                   cmpcontroller.Controller
-	summaryViewMore          bool
-	focusedThread            int
-	activityFocusTargets     []int
-	activityCache            activityRenderCache
-	activityBodyCache        map[string]string
-	reviewDiffCache          map[string][]reviewDiffLine
-	activitySnippetsExpanded bool
-	activityItemsCollapsed   bool
-	actionChecks             *actionview.Model
-	actionChecksKey          string
+	ctx                  *context.ProgramContext
+	sectionId            int
+	sectionType          string
+	pr                   *prrow.PullRequest
+	width                int
+	carousel             carousel.Model
+	editor               cmpcontroller.Controller
+	summaryViewMore      bool
+	focusedThread        int
+	activityFocusTargets []int
+	activityCache        activityRenderCache
+	activityBodyCache    map[string]string
+	reviewDiffCache      map[string][]reviewDiffLine
+	viewState            prViewState
+	viewStateKey         string
+	rememberedViewState  bool
+	viewStates           *state.Cache[prViewState]
+	actionChecks         *actionview.Model
+	actionChecksKey      string
 	// actionChecksCache stashes the Checks-tab embedded actionview keyed
 	// by "repo#number" so that switching between PR rows (or away to
 	// another view and back) restores the user's selected job/step,
 	// log scroll, search query, and zoom state for that PR.
-	actionChecksCache map[string]*actionview.Model
+	actionChecksCache *state.Cache[*actionview.Model]
 	// previewFocused tracks whether the preview pane currently owns
 	// keyboard focus. Update consults this to decide whether to forward
 	// key messages into the embedded Checks tab's actionview. Non-key
@@ -64,10 +67,18 @@ type Model struct {
 	previewFocused bool
 }
 
+// prViewStateCacheLimit caps session-scoped state retained for PR rows.
+const prViewStateCacheLimit = 1024
+
 // actionChecksCacheLimit caps the number of cached Checks-tab actionview
-// instances retained across PR row switches; bounded to prevent
-// unbounded growth in long sessions.
-const actionChecksCacheLimit = 16
+// instances retained across PR row switches.
+const actionChecksCacheLimit = 1024
+
+type prViewState struct {
+	selectedTabIndex         int
+	activitySnippetsExpanded bool
+	activityItemsCollapsed   bool
+}
 
 type activityRenderCache struct {
 	width       int
@@ -172,10 +183,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch {
 		case key.Matches(keyMsg, keys.PRKeys.PrevSidebarTab):
-			m.carousel.MoveLeft()
+			m.moveToPrevTab()
 			cmd = m.ActivateChecks()
 		case key.Matches(keyMsg, keys.PRKeys.NextSidebarTab):
-			m.carousel.MoveRight()
+			m.moveToNextTab()
 			cmd = m.ActivateChecks()
 		}
 	}
@@ -689,8 +700,12 @@ func (m *Model) SetRow(d *prrow.Data) {
 	if d == nil {
 		// Stash the active checks view before clearing so a subsequent
 		// row restore can bring it back.
+		m.stashActiveViewState()
 		m.stashActiveActionChecks()
 		m.pr = nil
+		m.viewState = prViewState{}
+		m.viewStateKey = ""
+		m.rememberedViewState = false
 		m.actionChecks = nil
 		m.actionChecksKey = ""
 		return
@@ -699,8 +714,9 @@ func (m *Model) SetRow(d *prrow.Data) {
 	newPR := d.Primary == nil || m.pr == nil || m.pr.Data == nil || m.pr.Data.Primary == nil || m.pr.Data.Primary.Url != d.Primary.Url
 	if newPR {
 		m.FocusNewComment()
-		m.activitySnippetsExpanded = false
-		m.activityItemsCollapsed = false
+		m.stashActiveViewState()
+		m.restoreViewState(prViewStateKey(d.Primary))
+		m.RestoreSelectedTab()
 		m.invalidateActivityCache()
 		// Cache the outgoing PR's Checks-tab actionview keyed by its
 		// repo#number so returning to that PR (within the cache cap)
@@ -721,21 +737,56 @@ func (m *Model) stashActiveActionChecks() {
 		return
 	}
 	if m.actionChecksCache == nil {
-		m.actionChecksCache = map[string]*actionview.Model{}
+		m.actionChecksCache = state.NewCache[*actionview.Model](actionChecksCacheLimit)
 	}
-	if existing, ok := m.actionChecksCache[m.actionChecksKey]; ok && existing == m.actionChecks {
+	if existing, ok := m.actionChecksCache.Get(m.actionChecksKey); ok && existing == m.actionChecks {
 		return
 	}
-	m.actionChecksCache[m.actionChecksKey] = m.actionChecks
-	if len(m.actionChecksCache) > actionChecksCacheLimit {
-		for k := range m.actionChecksCache {
-			if k == m.actionChecksKey {
-				continue
-			}
-			delete(m.actionChecksCache, k)
-			break
-		}
+	m.actionChecksCache.Put(m.actionChecksKey, m.actionChecks)
+}
+
+func (m *Model) stashActiveViewState() {
+	if m.viewStateKey == "" {
+		return
 	}
+	if m.viewStates == nil {
+		m.viewStates = state.NewCache[prViewState](prViewStateCacheLimit)
+	}
+	m.viewStates.Put(m.viewStateKey, m.viewState)
+}
+
+func (m *Model) restoreViewState(key string) {
+	m.viewStateKey = key
+	if key == "" {
+		m.viewState = prViewState{}
+		m.rememberedViewState = false
+		return
+	}
+	if m.viewStates == nil {
+		m.viewStates = state.NewCache[prViewState](prViewStateCacheLimit)
+	}
+	if s, ok := m.viewStates.Get(key); ok {
+		m.viewState = s
+		m.rememberedViewState = true
+		return
+	}
+	m.viewState = prViewState{}
+	m.rememberedViewState = false
+	// Declare this PR's state immediately so future fields added to prViewState
+	// are cached by the same stash/restore lifecycle.
+	m.viewStates.Put(key, m.viewState)
+}
+
+func prViewStateKey(pr *data.PullRequestData) string {
+	if pr == nil {
+		return ""
+	}
+	repo := pr.GetRepoNameWithOwner()
+	number := pr.GetNumber()
+	if repo == "" || number == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s#%d", repo, number)
 }
 
 func (m *Model) ActivateChecks() tea.Cmd {
@@ -793,8 +844,11 @@ func (m *Model) ensureActionChecks() tea.Cmd {
 
 	// If we've seen this PR before, restore its actionview instead of
 	// rebuilding it from scratch.
-	if cached, ok := m.actionChecksCache[key]; ok && cached != nil {
-		delete(m.actionChecksCache, key)
+	if m.actionChecksCache == nil {
+		m.actionChecksCache = state.NewCache[*actionview.Model](actionChecksCacheLimit)
+	}
+	if cached, ok := m.actionChecksCache.Get(key); ok && cached != nil {
+		m.actionChecksCache.Delete(key)
 		cached.SetSize(m.getIndentedContentWidth(), m.actionChecksHeight())
 		m.actionChecks = cached
 		m.actionChecksKey = key
@@ -1093,15 +1147,34 @@ func stringListChanges(currentItems []string, next []string) ([]string, []string
 }
 
 func (m *Model) GoToFirstTab() {
-	m.carousel.SetCursor(0)
+	m.GoToTab(0)
 }
 
 func (m *Model) GoToTab(index int) {
 	m.carousel.SetCursor(index)
+	m.viewState.selectedTabIndex = m.carousel.Cursor()
 }
 
 func (m *Model) GoToActivityTab() {
-	m.carousel.SetCursor(1) // Activity is the second tab (index 1)
+	m.GoToTab(1) // Activity is the second tab (index 1)
+}
+
+func (m *Model) RestoreSelectedTab() {
+	m.carousel.SetCursor(m.viewState.selectedTabIndex)
+}
+
+func (m Model) HasRememberedViewState() bool {
+	return m.rememberedViewState
+}
+
+func (m *Model) moveToPrevTab() {
+	m.carousel.MoveLeft()
+	m.viewState.selectedTabIndex = m.carousel.Cursor()
+}
+
+func (m *Model) moveToNextTab() {
+	m.carousel.MoveRight()
+	m.viewState.selectedTabIndex = m.carousel.Cursor()
 }
 
 func (m Model) SelectedTabIndex() int {
@@ -1277,12 +1350,12 @@ func (m *Model) SetSummaryViewLess() {
 }
 
 func (m *Model) ToggleActivitySnippetsExpanded() {
-	m.activitySnippetsExpanded = !m.activitySnippetsExpanded
+	m.viewState.activitySnippetsExpanded = !m.viewState.activitySnippetsExpanded
 	m.invalidateActivityCache()
 }
 
 func (m *Model) ToggleActivityItemsCollapsed() {
-	m.activityItemsCollapsed = !m.activityItemsCollapsed
+	m.viewState.activityItemsCollapsed = !m.viewState.activityItemsCollapsed
 	m.invalidateActivityCache()
 }
 

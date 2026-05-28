@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
+	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
@@ -58,12 +60,34 @@ func TestRenderReviewDiffPreviewCollapsesLongHunk(t *testing.T) {
 
 func TestRenderReviewDiffPreviewExpandsLongHunk(t *testing.T) {
 	m := newDiffPreviewTestModel(t)
-	m.activitySnippetsExpanded = true
+	m.viewState.activitySnippetsExpanded = true
 	preview := m.renderReviewDiffPreview("thread-1", "capacity_store.py", longReviewDiffHunk(15), 80)
 
 	plain := ansi.Strip(preview)
 	require.Contains(t, plain, "line 14")
 	require.Contains(t, plain, "Press e to collapse")
+}
+
+func TestActivityViewStateRestoredAcrossPRRows(t *testing.T) {
+	m := newDiffPreviewTestModel(t)
+	pr1 := prrow.Data{Primary: testPRViewPullRequestData(1, "https://github.com/owner/repo/pull/1")}
+	pr2 := prrow.Data{Primary: testPRViewPullRequestData(2, "https://github.com/owner/repo/pull/2")}
+
+	m.SetRow(&pr1)
+	m.GoToActivityTab()
+	m.ToggleActivityItemsCollapsed()
+	m.ToggleActivitySnippetsExpanded()
+
+	m.SetRow(&pr2)
+	require.Equal(t, 0, m.SelectedTabIndex())
+	require.False(t, m.viewState.activityItemsCollapsed)
+	require.False(t, m.viewState.activitySnippetsExpanded)
+
+	m.SetRow(&pr1)
+	m.RestoreSelectedTab()
+	require.Equal(t, 1, m.SelectedTabIndex())
+	require.True(t, m.viewState.activityItemsCollapsed)
+	require.True(t, m.viewState.activitySnippetsExpanded)
 }
 
 func TestReviewDiffLinesCachesParsedHunk(t *testing.T) {
@@ -108,4 +132,15 @@ func longReviewDiffHunk(additions int) string {
 		b.WriteString(fmt.Sprintf("+line %02d\n", i))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func testPRViewPullRequestData(number int, url string) *data.PullRequestData {
+	pr := &data.PullRequestData{
+		Number: number,
+		Url:    url,
+		Repository: data.Repository{
+			NameWithOwner: "owner/repo",
+		},
+	}
+	return pr
 }
