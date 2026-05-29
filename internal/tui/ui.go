@@ -718,8 +718,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 
 			case key.Matches(msg, keys.PRKeys.Reopen):
-				if action := prOpenCloseAction(currRowData); action != "" {
-					cmd = m.promptConfirmation(currSection, action)
+				if action := prOpenCloseAction(currRowData); action != "" && currSection != nil {
+					sid := tasks.SectionIdentifier{Id: currSection.GetId(), Type: currSection.GetType()}
+					cmd = executePROpenCloseAction(m.ctx, sid, currRowData, action)
 				}
 				return m, cmd
 
@@ -798,8 +799,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 
 			case key.Matches(msg, keys.IssueKeys.Reopen):
-				if action := issueOpenCloseAction(currRowData); action != "" {
-					cmd = m.promptConfirmation(currSection, action)
+				if action := issueOpenCloseAction(currRowData); action != "" && currSection != nil {
+					sid := tasks.SectionIdentifier{Id: currSection.GetId(), Type: currSection.GetType()}
+					cmd = executeIssueOpenCloseAction(m.ctx, sid, currRowData, action)
 				}
 				return m, cmd
 
@@ -940,8 +942,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, cmd
 
 						case prview.PRActionReopen:
-							if action := prOpenCloseAction(m.notificationView.GetSubjectPR()); action != "" {
-								cmd = m.promptConfirmationForNotificationPR(action)
+							if pr := m.notificationView.GetSubjectPR(); pr != nil {
+								if action := prOpenCloseAction(pr); action != "" {
+									sid := tasks.SectionIdentifier{Id: m.currSectionId, Type: notificationssection.SectionType}
+									cmd = executePROpenCloseAction(m.ctx, sid, pr, action)
+								}
 							}
 							return m, cmd
 
@@ -1057,8 +1062,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, cmd
 
 					case issueview.IssueActionReopen:
-						if action := issueOpenCloseAction(m.notificationView.GetSubjectIssue()); action != "" {
-							cmd = m.promptConfirmationForNotificationIssue(action)
+						if issue := m.notificationView.GetSubjectIssue(); issue != nil {
+							if action := issueOpenCloseAction(issue); action != "" {
+								sid := tasks.SectionIdentifier{Id: m.currSectionId, Type: notificationssection.SectionType}
+								cmd = executeIssueOpenCloseAction(m.ctx, sid, issue, action)
+							}
 						}
 						return m, cmd
 					}
@@ -2779,6 +2787,36 @@ func openCloseAction(state string) string {
 		return "reopen"
 	}
 	return ""
+}
+
+func executePROpenCloseAction(
+	ctx *context.ProgramContext,
+	sid tasks.SectionIdentifier,
+	pr data.RowData,
+	action string,
+) tea.Cmd {
+	switch action {
+	case "close":
+		return tasks.ClosePR(ctx, sid, pr)
+	case "reopen":
+		return tasks.ReopenPR(ctx, sid, pr)
+	}
+	return nil
+}
+
+func executeIssueOpenCloseAction(
+	ctx *context.ProgramContext,
+	sid tasks.SectionIdentifier,
+	issue data.RowData,
+	action string,
+) tea.Cmd {
+	switch action {
+	case "close":
+		return tasks.CloseIssue(ctx, sid, issue)
+	case "reopen":
+		return tasks.ReopenIssue(ctx, sid, issue)
+	}
+	return nil
 }
 
 func (m *Model) renderActionsRunPreview(run *data.WorkflowRun) string {

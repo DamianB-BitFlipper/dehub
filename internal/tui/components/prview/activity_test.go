@@ -30,7 +30,7 @@ func TestRenderActivityReusesCacheAcrossFocusChanges(t *testing.T) {
 	require.NotEmpty(t, second)
 	require.Equal(t, firstCache.fingerprint, m.activityCache.fingerprint)
 	require.Equal(t, firstCache.activities, m.activityCache.activities)
-	require.Contains(t, second, "focused")
+	require.NotEqual(t, first, second)
 	require.Len(t, m.activityBodyCache, 2)
 
 	third := m.renderActivity()

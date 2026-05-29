@@ -393,8 +393,78 @@ func TestRenderTitleIncludesApprovedReviewDecision(t *testing.T) {
 
 	got := ansi.Strip(pr.renderTitle())
 
-	if !strings.Contains(got, constants.ApprovedIcon+" Approved") {
+	if !strings.Contains(got, "Approved") || strings.Contains(got, constants.ApprovedIcon+" Approved") {
 		t.Fatalf("expected approved review decision in title, got %q", got)
+	}
+}
+
+func TestRenderTitleIncludesApprovedReview(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			Title:          "Fix sandbox webhook logic",
+			Number:         2456,
+			State:          "OPEN",
+			ReviewDecision: "REVIEW_REQUIRED",
+			ReviewThreads:  data.ReviewThreads{TotalCount: 3},
+			Reviews: data.Reviews{Nodes: []data.Review{{
+				State: "APPROVED",
+			}}},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{
+				Ui: config.UIThemeConfig{Table: config.TableUIThemeConfig{Compact: true}},
+			}},
+			Theme: *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderTitle())
+
+	if !strings.Contains(got, "Approved") {
+		t.Fatalf("expected approved review in title, got %q", got)
+	}
+}
+
+func TestRenderReviewStatusShowsApprovedReview(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			ReviewDecision: "REVIEW_REQUIRED",
+			ReviewThreads:  data.ReviewThreads{TotalCount: 3},
+			Reviews: data.Reviews{Nodes: []data.Review{{
+				State: "APPROVED",
+			}}},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderReviewStatus())
+
+	if got != constants.ApprovedIcon {
+		t.Fatalf("expected approved review status, got %q", got)
+	}
+}
+
+func TestRenderReviewStatusChangesRequestedPrecedence(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			ReviewDecision: "CHANGES_REQUESTED",
+			Reviews: data.Reviews{Nodes: []data.Review{{
+				State: "APPROVED",
+			}}},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderReviewStatus())
+
+	if got != constants.ChangesRequestedIcon {
+		t.Fatalf("expected changes requested review status, got %q", got)
 	}
 }
 
@@ -418,7 +488,7 @@ func TestRenderExtendedTitleIncludesApprovedReviewDecision(t *testing.T) {
 
 	got := ansi.Strip(pr.renderExtendedTitle(false))
 
-	if !strings.Contains(got, constants.ApprovedIcon+" Approved") {
+	if !strings.Contains(got, "Approved") || strings.Contains(got, constants.ApprovedIcon+" Approved") {
 		t.Fatalf("expected approved review decision in extended title, got %q", got)
 	}
 }

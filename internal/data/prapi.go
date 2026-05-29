@@ -91,7 +91,7 @@ type PullRequestData struct {
 	Assignees        Assignees      `graphql:"assignees(first: 3)"`
 	Comments         Comments       `graphql:"comments"`
 	ReviewThreads    ReviewThreads  `graphql:"reviewThreads"`
-	Reviews          Reviews        `graphql:"reviews(last: 3)"`
+	Reviews          Reviews        `graphql:"reviews(last: 100)"`
 	ReviewRequests   ReviewRequests `graphql:"reviewRequests(last: 5)"`
 	Files            ChangedFiles   `graphql:"files(first: 5)"`
 	IsDraft          bool

@@ -48,18 +48,18 @@ func (pr *PullRequest) renderReviewStatus() string {
 		return "-"
 	}
 	reviewCellStyle := pr.getTextStyle()
-	if pr.Data.Primary.ReviewDecision == "APPROVED" {
-		reviewCellStyle = reviewCellStyle.Foreground(
-			pr.Ctx.Theme.SuccessText,
-		)
-		return reviewCellStyle.Render(constants.ApprovedIcon)
-	}
-
 	if pr.Data.Primary.ReviewDecision == "CHANGES_REQUESTED" {
 		reviewCellStyle = reviewCellStyle.Foreground(
 			pr.Ctx.Theme.ErrorText,
 		)
 		return reviewCellStyle.Render(constants.ChangesRequestedIcon)
+	}
+
+	if pr.hasApprovedReview() {
+		reviewCellStyle = reviewCellStyle.Foreground(
+			pr.Ctx.Theme.SuccessText,
+		)
+		return reviewCellStyle.Render(constants.ApprovedIcon)
 	}
 
 	if pr.Data.Primary.Reviews.TotalCount > 0 {
@@ -242,15 +242,26 @@ func (pr *PullRequest) renderExtendedTitle(isSelected bool) string {
 }
 
 func (pr *PullRequest) renderReviewDecisionBadge(baseStyle lipgloss.Style) string {
-	if pr.Data == nil || pr.Data.Primary == nil || pr.Data.Primary.ReviewDecision != "APPROVED" {
+	if !pr.hasApprovedReview() {
 		return ""
 	}
 
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		baseStyle.Foreground(pr.Ctx.Theme.SuccessText).Render(constants.ApprovedIcon),
-		baseStyle.Foreground(pr.Ctx.Theme.SuccessText).Render(" Approved"),
-	)
+	return baseStyle.Foreground(pr.Ctx.Theme.SuccessText).Render("Approved")
+}
+
+func (pr *PullRequest) hasApprovedReview() bool {
+	if pr.Data == nil || pr.Data.Primary == nil {
+		return false
+	}
+	if pr.Data.Primary.ReviewDecision == "APPROVED" {
+		return true
+	}
+	for _, review := range pr.Data.Primary.Reviews.Nodes {
+		if review.State == "APPROVED" {
+			return true
+		}
+	}
+	return false
 }
 
 func (pr *PullRequest) renderAuthor() string {

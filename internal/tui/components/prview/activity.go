@@ -509,9 +509,6 @@ func (m *Model) cacheReviewThread(
 
 func (m *Model) renderReviewThreadHeader(thread reviewThread, isFocused bool) string {
 	var badges []string
-	if isFocused {
-		badges = append(badges, "focused")
-	}
 	badges = append(badges, fmt.Sprintf("%d comments", len(thread.Comments)))
 	if thread.IsResolved {
 		badges = append(badges, m.ctx.Styles.Common.SuccessGlyph+" resolved")
@@ -544,7 +541,6 @@ func (m *Model) renderNewCommentCard() string {
 	badges := []string{"PR comment"}
 	if m.IsNewCommentFocused() {
 		border = m.ctx.Theme.WarningText
-		badges = append([]string{"focused"}, badges...)
 	}
 
 	header := lipgloss.JoinHorizontal(
