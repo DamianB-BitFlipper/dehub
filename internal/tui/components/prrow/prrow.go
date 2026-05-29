@@ -208,11 +208,11 @@ func (pr *PullRequest) renderExtendedTitle(isSelected bool) string {
 	if branchHidden == nil || !*branchHidden {
 		branch := strings.TrimSpace(pr.Data.Primary.HeadRefName)
 		if branch != "" {
-			top = lipgloss.JoinHorizontal(lipgloss.Top, top, baseStyle.Render(" · "), baseStyle.Render(branch))
+			top = lipgloss.JoinHorizontal(lipgloss.Top, top, pr.renderMetadataSeparator(baseStyle), baseStyle.Render(branch))
 		}
 	}
 	if badge := pr.renderReviewDecisionBadge(baseStyle); badge != "" {
-		top = lipgloss.JoinHorizontal(lipgloss.Top, top, baseStyle.Render(" · "), badge)
+		top = lipgloss.JoinHorizontal(lipgloss.Top, top, pr.renderMetadataSeparator(baseStyle), badge)
 	}
 	title := pr.Data.Primary.Title
 	var titleColumn table.Column
@@ -247,6 +247,10 @@ func (pr *PullRequest) renderReviewDecisionBadge(baseStyle lipgloss.Style) strin
 	}
 
 	return baseStyle.Foreground(pr.Ctx.Theme.SuccessText).Render("Approved")
+}
+
+func (pr *PullRequest) renderMetadataSeparator(baseStyle lipgloss.Style) string {
+	return baseStyle.Render("  ")
 }
 
 func (pr *PullRequest) hasApprovedReview() bool {
