@@ -1,6 +1,7 @@
 package listviewport
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -127,5 +128,32 @@ func TestNextItemAtLastItem(t *testing.T) {
 
 	if m.GetCurrItem() != 9 {
 		t.Errorf("expected currId=9, got %d", m.GetCurrItem())
+	}
+}
+
+func TestCenterCurrItemScrollsSelectionToMiddle(t *testing.T) {
+	m := newTestModel(testModelOpts{numItems: 100, viewportHeight: 10, itemHeight: 1})
+	m.SyncViewPort(strings.Repeat("x\n", 100))
+	m.SetCurrItem(50)
+
+	m.CenterCurrItem()
+
+	if m.YOffset() != 45 {
+		t.Fatalf("expected centered YOffset=45, got %d", m.YOffset())
+	}
+	if m.topBoundId != 45 {
+		t.Fatalf("expected topBoundId=45, got %d", m.topBoundId)
+	}
+}
+
+func TestCenterCurrItemClampsAtTop(t *testing.T) {
+	m := newTestModel(testModelOpts{numItems: 100, viewportHeight: 10, itemHeight: 1})
+	m.SyncViewPort(strings.Repeat("x\n", 100))
+	m.SetCurrItem(2)
+
+	m.CenterCurrItem()
+
+	if m.YOffset() != 0 {
+		t.Fatalf("expected centered YOffset=0, got %d", m.YOffset())
 	}
 }

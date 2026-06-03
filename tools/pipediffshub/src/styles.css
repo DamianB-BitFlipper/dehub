@@ -86,3 +86,37 @@ body {
   font-family: var(--font-geist-sans);
   -webkit-font-smoothing: antialiased;
 }
+
+/* Hover marquee: only animates when the text actually overflows. The shift and
+   duration are provided as CSS custom properties by useOverflowMarquee. */
+.marquee-track {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.marquee-clip:hover .marquee-track--overflow,
+.marquee-clip:focus-visible .marquee-track--overflow,
+.marquee-clip:focus-within .marquee-track--overflow {
+  animation: marquee-shift var(--marquee-duration, 4s) ease-in-out infinite
+    alternate;
+}
+
+@keyframes marquee-shift {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  88%,
+  100% {
+    transform: translateX(var(--marquee-shift, 0));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-clip:hover .marquee-track--overflow,
+  .marquee-clip:focus-visible .marquee-track--overflow,
+  .marquee-clip:focus-within .marquee-track--overflow {
+    animation: none;
+  }
+}

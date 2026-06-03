@@ -2,6 +2,7 @@
 
 import type { DiffIndicators } from '@pierre/diffs';
 import {
+  IconBranch,
   IconCodeStyleBars,
   IconCollapsedRow,
   IconDiffSplit,
@@ -36,6 +37,7 @@ import type {
   CodeViewSavedCommentItem,
 } from './types';
 import { WorkerPoolStatus } from './WorkerPoolStatus';
+import { useOverflowMarquee } from '../useOverflowMarquee';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ui/button-group';
 import {
@@ -56,6 +58,9 @@ const SETTING_ROW_CLASS =
 
 interface CodeViewSidebarProps {
   className?: string;
+  prTitle?: string;
+  baseRefName?: string;
+  headRefName?: string;
   commentSections: readonly CodeViewSavedCommentItem[];
   collapseMode: 'expanded' | 'collapsed';
   diffIndicators: DiffIndicators;
@@ -82,6 +87,9 @@ interface CodeViewSidebarProps {
 
 export const CodeViewSidebar = memo(function CodeViewSidebar({
   className,
+  prTitle,
+  baseRefName,
+  headRefName,
   commentSections,
   collapseMode,
   diffIndicators,
@@ -233,6 +241,13 @@ export const CodeViewSidebar = memo(function CodeViewSidebar({
             </Button>
           )}
         </div>
+        {!sidebarCollapsed && (
+          <SidebarDiffMeta
+            prTitle={prTitle}
+            baseRefName={baseRefName}
+            headRefName={headRefName}
+          />
+        )}
         <div className={cn('mt-3 min-h-0 flex-1', sidebarCollapsed && 'hidden')}>
           <div
             role="region"
@@ -266,6 +281,91 @@ export const CodeViewSidebar = memo(function CodeViewSidebar({
     </>
   );
 });
+
+interface SidebarDiffMetaProps {
+  prTitle?: string;
+  baseRefName?: string;
+  headRefName?: string;
+}
+
+function SidebarDiffMeta({
+  prTitle,
+  baseRefName,
+  headRefName,
+}: SidebarDiffMetaProps) {
+  const title = (prTitle ?? '').trim();
+  const base = (baseRefName ?? '').trim();
+  const head = (headRefName ?? '').trim();
+  const hasBranches = base !== '' || head !== '';
+  if (title === '' && !hasBranches) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 border-b border-[var(--color-border-opaque)] px-4 pb-3 md:px-3">
+      {title !== '' && (
+        <MarqueeText
+          value={title}
+          className="text-sm font-semibold text-foreground"
+        />
+      )}
+      {hasBranches && (
+        <div className="flex min-w-0 flex-col gap-1">
+          <BranchField value={head || '?'} />
+          <div className="flex justify-center" aria-hidden>
+            <span className="rounded-full border border-[var(--color-border-opaque)] bg-background/40 px-2 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground/70 uppercase">
+              into
+            </span>
+          </div>
+          <BranchField value={base || '?'} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BranchField({ value }: { value: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--color-border-opaque)] bg-muted/35 px-2 py-1">
+      <IconBranch className="size-3 shrink-0 text-muted-foreground/70" />
+      <MarqueeText
+        value={value}
+        className="font-mono text-xs text-foreground"
+      />
+    </div>
+  );
+}
+
+function MarqueeText({
+  value,
+  className,
+}: {
+  value: string;
+  className?: string;
+}) {
+  const { containerRef, trackRef, overflowing, style } =
+    useOverflowMarquee(value);
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn('marquee-clip min-w-0 overflow-hidden', className)}
+      style={style}
+      title={value}
+      tabIndex={overflowing ? 0 : undefined}
+    >
+      <span
+        ref={trackRef}
+        className={cn(
+          'marquee-track',
+          overflowing && 'marquee-track--overflow'
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
 
 interface SidebarWrapperProps {
   children: ReactNode;

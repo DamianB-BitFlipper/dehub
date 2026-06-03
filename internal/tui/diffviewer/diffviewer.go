@@ -22,8 +22,8 @@ import (
 
 const (
 	BuiltInPager        = "builtin:pipediffshub"
-	heartbeatTimeout    = 2 * time.Second
-	closeGrace          = 1500 * time.Millisecond
+	heartbeatTimeout    = 30 * time.Second
+	closeGrace          = 10 * time.Second
 	heartbeatCheckEvery = 500 * time.Millisecond
 )
 
@@ -31,9 +31,12 @@ const (
 var embeddedDist embed.FS
 
 type Options struct {
-	Diff      []byte
-	SourceURL string
-	Title     string
+	Diff        []byte
+	RefreshDiff func(context.Context) ([]byte, error)
+	SourceURL   string
+	Title       string
+	BaseRefName string
+	HeadRefName string
 }
 
 func IsBuiltInPager(pager string) bool {
@@ -59,11 +62,14 @@ func Open(ctx context.Context, opts Options) error {
 	defer cancelServerCtx()
 
 	state := &serverState{
-		diff:      opts.Diff,
-		dist:      dist,
-		sourceURL: opts.SourceURL,
-		title:     opts.Title,
-		shutdown:  make(chan struct{}),
+		diff:        opts.Diff,
+		refreshDiff: opts.RefreshDiff,
+		dist:        dist,
+		sourceURL:   opts.SourceURL,
+		title:       opts.Title,
+		baseRefName: opts.BaseRefName,
+		headRefName: opts.HeadRefName,
+		shutdown:    make(chan struct{}),
 	}
 	server := &http.Server{
 		Handler: state,
@@ -113,10 +119,13 @@ func Open(ctx context.Context, opts Options) error {
 }
 
 type serverState struct {
-	diff      []byte
-	dist      fs.FS
-	sourceURL string
-	title     string
+	diff        []byte
+	refreshDiff func(context.Context) ([]byte, error)
+	dist        fs.FS
+	sourceURL   string
+	title       string
+	baseRefName string
+	headRefName string
 
 	mu                sync.Mutex
 	receivedHeartbeat bool
@@ -129,13 +138,16 @@ type serverState struct {
 func (s *serverState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/diff", "/api/diff":
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write(s.diff)
+		s.serveDiff(w, r)
 	case "/meta":
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(map[string]string{"sourceURL": s.sourceURL, "title": s.title})
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"sourceURL":   s.sourceURL,
+			"title":       s.title,
+			"baseRefName": s.baseRefName,
+			"headRefName": s.headRefName,
+		})
 	case "/heartbeat":
 		s.recordHeartbeat()
 		w.WriteHeader(http.StatusNoContent)
@@ -145,6 +157,22 @@ func (s *serverState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.serveStatic(w, r)
 	}
+}
+
+func (s *serverState) serveDiff(w http.ResponseWriter, r *http.Request) {
+	diff := s.diff
+	if s.refreshDiff != nil {
+		refreshedDiff, err := s.refreshDiff(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		diff = refreshedDiff
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write(diff)
 }
 
 func (s *serverState) recordHeartbeat() {

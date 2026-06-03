@@ -266,6 +266,9 @@ func (m *Model) activitySelectionBlocks() []selection.Block {
 	if !m.IsActivityTab() || m.editor.Mode() != cmpcontroller.ModeNone {
 		return nil
 	}
+	if m.pr == nil || m.pr.Data == nil {
+		return nil
+	}
 	width := m.getIndentedContentWidth()
 	if !m.pr.Data.IsEnriched {
 		return nil
@@ -294,6 +297,14 @@ func (m *Model) activitySelectionBlocks() []selection.Block {
 		}
 		contentY += h
 	}
+	newCommentCard := m.renderNewCommentCard()
+	blocks = append(blocks, selection.Block{
+		ID:       selection.ID("activity", "new-comment"),
+		ContentY: contentY,
+		Height:   lipgloss.Height(newCommentCard),
+		Plain:    ansi.Strip(newCommentCard),
+		Styled:   newCommentCard,
+	})
 	return blocks
 }
 
@@ -309,6 +320,32 @@ func (m *Model) PreviewSelectionBlocks() []selection.Block {
 	default:
 		return nil
 	}
+}
+
+// FocusedActivityBlock returns the currently keyboard-focused activity card's
+// content-relative block. Only review threads and the new-comment card can be
+// focused by keyboard navigation.
+func (m *Model) FocusedActivityBlock() (selection.Block, bool) {
+	if !m.IsActivityTab() {
+		return selection.Block{}, false
+	}
+
+	targetID := ""
+	if m.focusedThread == focusedNewComment {
+		targetID = selection.ID("activity", "new-comment")
+	} else if thread, ok := m.FocusedReviewThread(); ok {
+		targetID = selection.ID("activity", "thread", thread.Id)
+	}
+	if targetID == "" {
+		return selection.Block{}, false
+	}
+
+	for _, block := range m.activitySelectionBlocks() {
+		if block.ID == targetID {
+			return block, true
+		}
+	}
+	return selection.Block{}, false
 }
 
 func (m *Model) activityBodyCacheKey(fingerprint string) (string, bool) {

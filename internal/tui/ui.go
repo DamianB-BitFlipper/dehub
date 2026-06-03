@@ -391,6 +391,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case key.Matches(msg, m.keys.CenterFocused):
+			m.centerFocused(currSection)
+			return m, nil
+
 		case m.isPreviewFocused() && m.isPreviewTabKey(msg):
 			outgoingTab := m.prView.SelectedTabIndex()
 			m.savePRPreviewStateAt(outgoingTab)
@@ -913,9 +917,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 						case prview.PRActionDiff:
 							if pr := m.notificationView.GetSubjectPR(); pr != nil {
+								baseRefName := ""
+								headRefName := ""
+								if pr.Primary != nil {
+									baseRefName = pr.Primary.BaseRefName
+									headRefName = pr.Primary.HeadRefName
+								}
 								cmd = common.DiffPR(pr.GetNumber(), pr.GetRepoNameWithOwner(),
 									pr.GetTitle(),
 									pr.GetUrl(),
+									baseRefName,
+									headRefName,
 									m.ctx.Config.Pager.Diff,
 									m.ctx.Config.RunDiffPagerInBackground(),
 									m.ctx.Config.GetFullScreenDiffPagerEnv())
@@ -2219,6 +2231,37 @@ func (m *Model) scrollActionsDetailsBy(notch int) tea.Cmd {
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) centerFocused(currSection section.Section) {
+	if currSection == nil {
+		return
+	}
+
+	if m.ctx.View == config.ActionsView {
+		currSection.CenterFocused()
+		return
+	}
+
+	if m.isPreviewFocused() {
+		if block, ok := m.prView.FocusedActivityBlock(); ok {
+			m.centerPreviewBlock(block)
+		}
+		return
+	}
+
+	currSection.CenterFocused()
+}
+
+func (m *Model) centerPreviewBlock(block selection.Block) {
+	if block.Height <= 0 || m.sidebar.ViewportHeight() <= 0 {
+		return
+	}
+	targetOffset := block.ContentY + block.Height/2 - m.sidebar.ViewportHeight()/2
+	if targetOffset < 0 {
+		targetOffset = 0
+	}
+	m.sidebar.ScrollToOffset(targetOffset)
 }
 
 func (m *Model) onViewedRowChanged() tea.Cmd {

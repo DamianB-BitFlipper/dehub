@@ -97,6 +97,9 @@ func (t *TestSection) RowsSelectionScroll(contentTop int) selection.Scroll {
 	return selection.Scroll{}
 }
 
+// CenterFocused implements section.Section.
+func (t *TestSection) CenterFocused() {}
+
 // ScrollBy implements section.Section.
 func (t *TestSection) ScrollBy(lines int) {}
 

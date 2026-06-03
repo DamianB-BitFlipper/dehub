@@ -31,14 +31,16 @@ import {
   removeSavedCommentSidebarEntry,
   upsertSavedCommentSidebarEntry,
 } from './utils';
+import type { DiffMeta } from '../diffMeta';
 import { cn } from '@/lib/utils';
 
 interface ReviewUIProps {
   domain?: string;
   path: string;
+  meta?: DiffMeta;
 }
 
-export function ReviewUI({ domain, path }: ReviewUIProps) {
+export function ReviewUI({ domain, path, meta }: ReviewUIProps) {
   useEffect(preloadAvatars, []);
 
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
@@ -248,6 +250,9 @@ export function ReviewUI({ domain, path }: ReviewUIProps) {
         <>
           <CodeViewSidebar
             className="[grid-area:viewer] md:[grid-area:tree]"
+            prTitle={meta?.title}
+            baseRefName={meta?.baseRefName}
+            headRefName={meta?.headRefName}
             collapseMode={collapseMode}
             commentSections={commentSections}
             diffIndicators={diffIndicators}

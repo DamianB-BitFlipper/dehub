@@ -6,8 +6,8 @@ import { Buffer } from 'node:buffer';
 
 import { EMBEDDED_DIST } from '../src/embedded-dist';
 
-const HEARTBEAT_TIMEOUT_MS = 2_000;
-const CLOSE_GRACE_MS = 1_500;
+const HEARTBEAT_TIMEOUT_MS = 30_000;
+const CLOSE_GRACE_MS = 10_000;
 const ANSI_ESCAPE_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 const root = getProjectRoot();
 const distDir = join(root, 'dist');
@@ -71,7 +71,10 @@ async function main() {
         });
       }
       if (url.pathname === '/meta') {
-        return Response.json({ sourceURL, title: '' }, { headers: { 'cache-control': 'no-store' } });
+        return Response.json(
+          { sourceURL, title: '', baseRefName: '', headRefName: '' },
+          { headers: { 'cache-control': 'no-store' } }
+        );
       }
       if (url.pathname === '/heartbeat') {
         receivedHeartbeat = true;

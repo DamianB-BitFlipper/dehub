@@ -268,6 +268,7 @@ func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, Keys.NextSection, "]")
 	requireKeys(t, Keys.PageUp, "ctrl+up")
 	requireKeys(t, Keys.PageDown, "ctrl+down")
+	requireKeys(t, Keys.CenterFocused, "ctrl+l")
 	requireKeys(t, Keys.PreviewTop, "ctrl+h")
 	requireKeys(t, Keys.PreviewBottom, "ctrl+g")
 	requireKeys(t, Keys.FocusMain, "ctrl+left")

@@ -53,6 +53,7 @@ type KeyMap struct {
 	Redraw        key.Binding
 	PageDown      key.Binding
 	PageUp        key.Binding
+	CenterFocused key.Binding
 	PreviewTop    key.Binding
 	PreviewBottom key.Binding
 	FocusMain     key.Binding
@@ -172,6 +173,7 @@ func (k KeyMap) NavigationKeys() []key.Binding {
 		k.LastLine,
 		k.PageDown,
 		k.PageUp,
+		k.CenterFocused,
 		k.PreviewTop,
 		k.PreviewBottom,
 		k.FocusMain,
@@ -241,6 +243,10 @@ var Keys = &KeyMap{
 	PageUp: key.NewBinding(
 		key.WithKeys("ctrl+up"),
 		key.WithHelp("Ctrl+↑", "preview page up"),
+	),
+	CenterFocused: key.NewBinding(
+		key.WithKeys("ctrl+l"),
+		key.WithHelp("Ctrl+l", "center focus"),
 	),
 	PreviewTop: key.NewBinding(
 		key.WithKeys("ctrl+h"),
@@ -378,6 +384,8 @@ func rebindUniversal(universal []config.Keybinding) error {
 			key = &Keys.PageDown
 		case "pageUp":
 			key = &Keys.PageUp
+		case "centerFocused":
+			key = &Keys.CenterFocused
 		case "previewTop":
 			key = &Keys.PreviewTop
 		case "previewBottom":

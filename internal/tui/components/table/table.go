@@ -185,6 +185,10 @@ func (m *Model) PageUp() int {
 	return currItem
 }
 
+func (m *Model) CenterCurrItem() {
+	m.rowsViewport.CenterCurrItem()
+}
+
 func (m *Model) cacheColumnWidths() {
 	columns := m.renderHeaderColumns()
 	for i, col := range columns {

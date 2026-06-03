@@ -16,9 +16,9 @@ import (
 
 // DiffPR opens a diff view for a PR using the gh CLI.
 // The env parameter should be the result of Config.GetFullScreenDiffPagerEnv().
-func DiffPR(prNumber int, repoName string, prTitle string, prURL string, diffPager string, runInBackground bool, env []string) tea.Cmd {
+func DiffPR(prNumber int, repoName string, prTitle string, prURL string, baseRefName string, headRefName string, diffPager string, runInBackground bool, env []string) tea.Cmd {
 	if runInBackground || diffviewer.IsBuiltInPager(diffPager) {
-		return openDiffInBackground(prNumber, repoName, prTitle, prURL, diffPager)
+		return openDiffInBackground(prNumber, repoName, prTitle, prURL, baseRefName, headRefName, diffPager)
 	}
 
 	c := exec.Command(
@@ -39,19 +39,28 @@ func DiffPR(prNumber int, repoName string, prTitle string, prURL string, diffPag
 	})
 }
 
-func openDiffInBackground(prNumber int, repoName string, prTitle string, prURL string, diffPager string) tea.Cmd {
+func openDiffInBackground(prNumber int, repoName string, prTitle string, prURL string, baseRefName string, headRefName string, diffPager string) tea.Cmd {
 	return func() tea.Msg {
 		if strings.TrimSpace(diffPager) == "" {
 			diffPager = "less"
 		}
 
-		diff, err := fetchPRDiff(prNumber, repoName)
+		diff, err := fetchPRDiff(context.Background(), prNumber, repoName)
 		if err != nil {
 			return constants.ErrMsg{Err: err}
 		}
 
 		if diffviewer.IsBuiltInPager(diffPager) {
-			if err := diffviewer.Open(context.Background(), diffviewer.Options{Diff: diff, SourceURL: prURL, Title: formatPRTabTitle(prNumber, prTitle)}); err != nil {
+			if err := diffviewer.Open(context.Background(), diffviewer.Options{
+				Diff: diff,
+				RefreshDiff: func(ctx context.Context) ([]byte, error) {
+					return fetchPRDiff(ctx, prNumber, repoName)
+				},
+				SourceURL:   prURL,
+				Title:       formatPRTabTitle(prNumber, prTitle),
+				BaseRefName: baseRefName,
+				HeadRefName: headRefName,
+			}); err != nil {
 				return constants.ErrMsg{Err: err}
 			}
 			return nil
@@ -87,8 +96,9 @@ func formatPRTabTitle(prNumber int, prTitle string) string {
 	return fmt.Sprintf("#%d %s", prNumber, prTitle)
 }
 
-func fetchPRDiff(prNumber int, repoName string) ([]byte, error) {
-	ghCmd := exec.Command(
+func fetchPRDiff(ctx context.Context, prNumber int, repoName string) ([]byte, error) {
+	ghCmd := exec.CommandContext(
+		ctx,
 		"gh",
 		"pr",
 		"diff",

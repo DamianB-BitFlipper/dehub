@@ -40,7 +40,12 @@ function devDiffServer(): Plugin {
           res.setHeader('Cache-Control', 'no-store');
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
           res.end(
-            JSON.stringify({ sourceURL: 'dev://sample.diff', title: 'Dev Diff' })
+            JSON.stringify({
+              sourceURL: 'dev://sample.diff',
+              title: 'Dev Diff',
+              baseRefName: 'main',
+              headRefName: 'feature/pipediffshub',
+            })
           );
           return;
         }

@@ -170,6 +170,7 @@ type Section interface {
 	GetItemPluralForm() string
 	GetTotalCount() int
 	RowsSelectionScroll(contentTop int) selection.Scroll
+	CenterFocused()
 	// ScrollBy moves the row cursor by the given number of lines (negative
 	// scrolls up, positive scrolls down), mirroring repeated PrevRow/NextRow.
 	// It is used for mouse-wheel scrolling. The caller is responsible for any
@@ -414,6 +415,10 @@ func (m *BaseModel) ScrollBy(lines int) {
 	for range lines {
 		m.Table.NextItem()
 	}
+}
+
+func (m *BaseModel) CenterFocused() {
+	m.Table.CenterCurrItem()
 }
 
 func (m *BaseModel) IsSearchFocused() bool {

@@ -623,6 +623,15 @@ func (m *Model) ScrollBy(lines int) {
 	}
 }
 
+func (m *Model) CenterFocused() {
+	switch m.focusedPane {
+	case PaneWorkflows:
+		m.BaseModel.CenterFocused()
+	case PaneRuns:
+		m.RunsTable.CenterCurrItem()
+	}
+}
+
 // FocusedPane returns which of the three Actions panes currently consumes
 // navigation keys.
 func (m *Model) FocusedPane() Pane {

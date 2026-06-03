@@ -186,6 +186,29 @@ func (m *Model) LastItem() int {
 	return m.currId
 }
 
+// CenterCurrItem scrolls the viewport so the current item sits as close to the
+// vertical center as the content bounds allow.
+func (m *Model) CenterCurrItem() {
+	if m.NumCurrentItems <= 0 || m.ListItemHeight <= 0 || m.viewport.Height() <= 0 {
+		return
+	}
+
+	itemTop := m.currId * m.ListItemHeight
+	itemCenter := itemTop + m.ListItemHeight/2
+	targetOffset := itemCenter - m.viewport.Height()/2
+	if targetOffset < 0 {
+		targetOffset = 0
+	}
+	m.viewport.SetYOffset(targetOffset)
+
+	m.topBoundId = m.viewport.YOffset() / m.ListItemHeight
+	pageSize := m.getNumPrsPerPage()
+	if pageSize < 1 {
+		pageSize = 1
+	}
+	m.bottomBoundId = m.topBoundId + pageSize - 1
+}
+
 func (m *Model) SetDimensions(dimensions constants.Dimensions) {
 	m.viewport.SetHeight(max(0, dimensions.Height))
 	m.viewport.SetWidth(max(0, dimensions.Width))
