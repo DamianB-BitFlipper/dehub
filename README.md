@@ -13,3 +13,26 @@ make local-install
 ```
 
 This builds the bundled diff viewer, builds `dehub`, and installs the current checkout as the `dehub` GitHub CLI extension.
+
+## Configuration
+
+Configuration is largely the same as gh-dash. See the [gh-dash getting started guide](https://www.gh-dash.dev/getting-started/) for configuration details.
+
+## Common Shortcuts
+
+- `?` opens help.
+- `↑` / `↓` move through items.
+- `[` / `]` switch sections.
+- `{` / `}` switch views.
+- `Ctrl+←` focuses the main pane and `Ctrl+→` focuses the preview pane.
+- `/` searches and `s` filters rows.
+- `o` opens the selected item in GitHub.
+- `y` copies the selected item number and `Y` copies its URL.
+- `R` refreshes.
+- `Q` or `Ctrl+C` quits.
+
+## How To Run
+
+```bash
+gh dehub
+```
