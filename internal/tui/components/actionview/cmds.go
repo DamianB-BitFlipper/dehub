@@ -21,11 +21,15 @@ import (
 )
 
 type workflowRunsFetchedMsg struct {
+	repo      string
+	prNumber  string
 	pr        api.PRWithChecks
 	runs      []data.WorkflowRun
 	rateLimit api.RateLimit
 	err       error
 }
+
+var fetchPRCheckRuns = api.FetchPRCheckRuns
 
 func (m *model) makeFetchPRCmd() tea.Cmd {
 	return func() tea.Msg {
@@ -87,20 +91,22 @@ func (m *model) fetchPRChecks(prNumber string) tea.Msg {
 }
 
 func (m model) fetchPRChecksWithCursor(prNumber string, cursor string) tea.Msg {
-	resp, err := api.FetchPRCheckRuns(m.repo, prNumber, cursor)
+	resp, err := fetchPRCheckRuns(m.repo, prNumber, cursor)
 	if err != nil {
 		log.Error("error fetching pr checks", "err", err)
-		return workflowRunsFetchedMsg{err: err, rateLimit: resp.RateLimit}
+		return workflowRunsFetchedMsg{repo: m.repo, prNumber: prNumber, err: err, rateLimit: resp.RateLimit}
 	}
 
 	if resp.Resource.PullRequest.Number == 0 {
-		return workflowRunsFetchedMsg{err: errors.New("pull request not found")}
+		return workflowRunsFetchedMsg{repo: m.repo, prNumber: prNumber, err: errors.New("pull request not found")}
 	}
 
 	nodes := resp.Resource.PullRequest.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes
 	runs := makeWorkflowRuns(nodes)
 
 	return workflowRunsFetchedMsg{
+		repo:      m.repo,
+		prNumber:  prNumber,
 		rateLimit: resp.RateLimit,
 		pr:        resp.Resource.PullRequest,
 		runs:      runs,
@@ -810,23 +816,27 @@ func (m *model) rerunRun(runId string) []tea.Cmd {
 }
 
 type prFetchedMsg struct {
-	pr  api.PR
-	err error
+	repo     string
+	prNumber string
+	pr       api.PR
+	err      error
 }
 
 func (m model) fetchPR() tea.Msg {
 	resp, err := api.FetchPR(m.repo, m.prNumber)
 	if err != nil {
 		log.Error("error fetching pr", "err", err)
-		return prFetchedMsg{err: err}
+		return prFetchedMsg{repo: m.repo, prNumber: m.prNumber, err: err}
 	}
 
 	if resp.Resource.PullRequest.Number == 0 {
-		return prFetchedMsg{err: errors.New("pull request not found")}
+		return prFetchedMsg{repo: m.repo, prNumber: m.prNumber, err: errors.New("pull request not found")}
 	}
 
 	return prFetchedMsg{
-		pr: resp.Resource.PullRequest,
+		repo:     m.repo,
+		prNumber: m.prNumber,
+		pr:       resp.Resource.PullRequest,
 	}
 }
 

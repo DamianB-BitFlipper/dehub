@@ -299,6 +299,98 @@ func TestEmbeddedActionViewDoesNotHandleKeyPresses(t *testing.T) {
 	}
 }
 
+func TestEmbeddedActionViewDoesNotHandleRefreshKey(t *testing.T) {
+	m := NewModel("dlvhdr/gh-dehub", "1", ModelOpts{Flat: true})
+	m.SetSize(100, 30)
+	check := NewCheckItem(data.WorkflowJob{
+		Id:         "1",
+		Name:       "first",
+		State:      api.StatusCompleted,
+		Conclusion: api.ConclusionSuccess,
+		Bucket:     data.CheckBucketPass,
+		Kind:       data.JobKindStatusContext,
+	}, m.styles)
+	m.checksList.SetItems([]list.Item{&check})
+
+	next, cmd := m.UpdateEmbedded(tea.KeyPressMsg{Text: "R", Code: 'R'})
+	if cmd != nil {
+		t.Fatal("expected embedded refresh key to return no command")
+	}
+	if next.width != 100 || next.height != 30 {
+		t.Fatalf("expected embedded refresh key not to rebuild model, got size %dx%d", next.width, next.height)
+	}
+	selected := next.getSelectedCheckItem()
+	if selected == nil || selected.job.Id != "1" {
+		t.Fatalf("expected embedded refresh key to preserve checks selection, got %#v", selected)
+	}
+}
+
+func TestRefreshChecksFetchesPRChecksOnce(t *testing.T) {
+	origFetch := fetchPRCheckRuns
+	fetchPRCheckRuns = func(repo string, prNumber string, cursor string) (api.PRCheckRunsQuery, error) {
+		if repo != "dlvhdr/gh-dehub" {
+			t.Fatalf("expected repo dlvhdr/gh-dehub, got %q", repo)
+		}
+		if prNumber != "1" {
+			t.Fatalf("expected PR number 1, got %q", prNumber)
+		}
+		if cursor != "" {
+			t.Fatalf("expected empty cursor, got %q", cursor)
+		}
+		return api.PRCheckRunsQuery{}, errors.New("stop")
+	}
+	defer func() { fetchPRCheckRuns = origFetch }()
+
+	m := NewModel("dlvhdr/gh-dehub", "1", ModelOpts{Flat: true})
+	cmd := m.RefreshChecks()
+	if cmd == nil {
+		t.Fatal("expected refresh checks command")
+	}
+
+	msg, ok := cmd().(workflowRunsFetchedMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunsFetchedMsg, got %T", msg)
+	}
+	if msg.err == nil || msg.err.Error() != "stop" {
+		t.Fatalf("expected stub error, got %v", msg.err)
+	}
+	if msg.repo != "dlvhdr/gh-dehub" || msg.prNumber != "1" {
+		t.Fatalf("expected tagged source dlvhdr/gh-dehub#1, got %s#%s", msg.repo, msg.prNumber)
+	}
+}
+
+func TestStaleWorkflowRunsFetchedMsgIsIgnored(t *testing.T) {
+	m := NewModel("owner/repo", "2", ModelOpts{Flat: true})
+	runs := []data.WorkflowRun{{
+		Id:        "run-1",
+		Name:      "stale run",
+		RunNumber: 1,
+		Jobs: []data.WorkflowJob{{
+			Id:         "job-1",
+			Name:       "stale job",
+			State:      api.StatusCompleted,
+			Conclusion: api.ConclusionSuccess,
+			Bucket:     data.CheckBucketPass,
+			Kind:       data.JobKindStatusContext,
+		}},
+	}}
+
+	next, cmd := m.Update(workflowRunsFetchedMsg{
+		repo:     "owner/repo",
+		prNumber: "1",
+		runs:     runs,
+	})
+	if cmd != nil {
+		t.Fatal("expected stale checks response to return no command")
+	}
+	if len(next.workflowRuns) != 0 {
+		t.Fatalf("expected stale checks response not to update workflow runs, got %#v", next.workflowRuns)
+	}
+	if len(next.checksList.Items()) != 0 {
+		t.Fatalf("expected stale checks response not to update checks list, got %d items", len(next.checksList.Items()))
+	}
+}
+
 func TestFocusLogsSearchAllowsEmbeddedSearchInputKeys(t *testing.T) {
 	m := NewModel("dlvhdr/gh-dehub", "1", ModelOpts{Flat: true})
 	m.FocusLogsSearch()

@@ -372,6 +372,52 @@ func TestVisibleRefreshTargetsUsesConfiguredPRPreviewInterval(t *testing.T) {
 	require.Equal(t, 3*time.Second, targets[0].interval)
 }
 
+func TestApplyPRPreviewRefreshRefreshesEmbeddedChecks(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{Config: &cfg, View: config.PRsView}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	url := "https://github.com/owner/repo/pull/42"
+	newModel := func() Model {
+		prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+		prSection.Prs = append(prSection.Prs, prrow.Data{
+			Primary: testPullRequestData(42, url),
+		})
+		prSection.Table.SetRows(prSection.BuildRows())
+
+		m := Model{
+			ctx:              ctx,
+			keys:             keys.Keys,
+			prs:              []section.Section{&prSection},
+			currSectionId:    0,
+			prView:           prview.NewModel(ctx),
+			sidebar:          sidebar.NewModel(),
+			notificationView: notificationview.NewModel(ctx),
+		}
+		m.sidebar.IsOpen = true
+		m.prView.UpdateProgramContext(ctx)
+		m.prView.SetRow(&prSection.Prs[0])
+		m.prView.SetWidth(80)
+		return m
+	}
+
+	updated := data.EnrichedPullRequestData{Number: 42, Url: url, Title: "updated"}
+	withoutChecks := newModel()
+	require.Nil(t, withoutChecks.applyPRPreviewRefresh(url, updated))
+
+	withChecks := newModel()
+	withChecks.prView.GoToTab(2)
+	require.NotNil(t, withChecks.prView.ActivateChecks())
+	require.NotNil(t, withChecks.prView.RefreshChecks())
+	require.NotNil(t, withChecks.applyPRPreviewRefresh(url, updated))
+}
+
 func TestVisibleRefreshTargetsIncludesCurrentPRSection(t *testing.T) {
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag:       "../config/testdata/test-config.yml",
@@ -1316,6 +1362,61 @@ func TestChecksLogsSearchReceivesTypingBeforeMainLocalSearch(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "x", value)
 	require.False(t, prSection.IsLocalSearchFocused(), "typing into logs search should not trigger main local search")
+}
+
+func TestChecksRefreshKeyUsesParentRefresh(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	require.NoError(t, err)
+
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		View:   config.PRsView,
+		StartTask: func(task context.Task) tea.Cmd {
+			return nil
+		},
+	}
+	ctx.Theme = theme.ParseTheme(ctx.Config)
+	ctx.Styles = context.InitStyles(ctx.Theme)
+
+	prSection := prssection.NewModel(0, ctx, config.PrsSectionConfig{}, time.Now(), time.Now())
+	prSection.Prs = append(prSection.Prs, prrow.Data{
+		Primary: testPullRequestData(1, "https://github.com/owner/repo/pull/1"),
+	})
+	prSection.Table.SetRows(prSection.BuildRows())
+	require.Len(t, prSection.Prs, 1)
+
+	sidebarModel := sidebar.NewModel()
+	sidebarModel.IsOpen = true
+	sidebarModel.UpdateProgramContext(ctx)
+
+	m := Model{
+		ctx:              ctx,
+		keys:             keys.Keys,
+		prs:              []section.Section{&prSection},
+		currSectionId:    0,
+		prView:           prview.NewModel(ctx),
+		sidebar:          sidebarModel,
+		issueSidebar:     issueview.NewModel(ctx),
+		notificationView: notificationview.NewModel(ctx),
+		footer:           footer.NewModel(ctx),
+		tabs:             tabs.NewModel(ctx),
+		activePane:       previewPane,
+	}
+	m.ctx.ActivePane = "preview"
+	m.prView.UpdateProgramContext(ctx)
+	m.prView.SetRow(&prSection.Prs[0])
+	m.prView.SetWidth(80)
+	m.prView.GoToTab(2)
+	m.prView.ActivateChecks()
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "R", Code: 'R'})
+	m = next.(Model)
+	require.NotNil(t, cmd)
+	require.True(t, prSection.IsLoading, "parent refresh should put the PR section in loading state")
+	require.Empty(t, prSection.Prs, "parent refresh should reset PR section rows")
 }
 
 func TestOpenPRURLPopupSearchesPRSearchSection(t *testing.T) {

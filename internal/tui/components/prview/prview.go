@@ -821,6 +821,13 @@ func (m *Model) ActivateChecks() tea.Cmd {
 	return m.ensureActionChecks()
 }
 
+func (m *Model) RefreshChecks() tea.Cmd {
+	if !m.IsChecksTab() || m.actionChecks == nil {
+		return nil
+	}
+	return m.actionChecks.RefreshChecks()
+}
+
 func (m *Model) FocusChecksLogsSearch() tea.Cmd {
 	if !m.IsChecksTab() || m.actionChecks == nil {
 		return nil

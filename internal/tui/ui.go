@@ -3750,7 +3750,8 @@ func (m *Model) applyPRPreviewRefresh(url string, pr data.EnrichedPullRequestDat
 		}
 	}
 
-	return m.syncSidebar()
+	checksCmd := m.prView.RefreshChecks()
+	return tea.Batch(m.syncSidebar(), checksCmd)
 }
 
 func (m *Model) visibleRefreshTargets() []visibleRefreshTarget {

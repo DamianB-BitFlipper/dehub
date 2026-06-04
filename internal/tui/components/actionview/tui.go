@@ -211,6 +211,22 @@ func (m model) Init() tea.Cmd {
 	return m.makeInitCmd()
 }
 
+func (m Model) RefreshChecks() tea.Cmd {
+	if m.inRunMode() || m.repo == "" || m.prNumber == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return m.fetchPRChecks(m.prNumber)
+	}
+}
+
+func (m model) isCurrentPRMsg(repo string, prNumber string) bool {
+	if repo == "" && prNumber == "" {
+		return true
+	}
+	return repo == m.repo && prNumber == m.prNumber
+}
+
 func (m Model) UpdateEmbedded(msg tea.Msg) (Model, tea.Cmd) {
 	m.embedded = true
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
@@ -477,6 +493,9 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, m.onWorkflowRunsFetched()...)
 
 	case prFetchedMsg:
+		if !m.isCurrentPRMsg(msg.repo, msg.prNumber) {
+			break
+		}
 		m.pr = msg.pr
 
 	case workflowRunsFetchedMsg, prChecksIntervalTickMsg:
@@ -485,6 +504,9 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			wrMsg = tickMsg.msg.(workflowRunsFetchedMsg)
 		} else {
 			wrMsg = msg.(workflowRunsFetchedMsg)
+		}
+		if !m.isCurrentPRMsg(wrMsg.repo, wrMsg.prNumber) {
+			break
 		}
 		m.rateLimit = wrMsg.rateLimit
 		if wrMsg.err != nil && wrMsg.rateLimit.Remaining == 0 {

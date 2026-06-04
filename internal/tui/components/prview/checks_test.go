@@ -239,6 +239,17 @@ func TestSetEnrichedPRUpdatesPrimaryStateAndReviewDecision(t *testing.T) {
 	require.Equal(t, "APPROVED", m.pr.Data.Primary.ReviewDecision)
 }
 
+func TestRefreshChecksRequiresActiveEmbeddedChecks(t *testing.T) {
+	m := newTestModelForChecks(t, checksTestOptions{})
+	m.pr.Data.Primary.Number = 42
+	m.pr.Data.Primary.Repository.NameWithOwner = "owner/repo"
+	m.GoToTab(2)
+
+	require.Nil(t, m.RefreshChecks())
+	require.NotNil(t, m.ActivateChecks())
+	require.NotNil(t, m.RefreshChecks())
+}
+
 func TestRenderChecks_AwaitingApproval(t *testing.T) {
 	// Test that CheckSuites with conclusion: ACTION_REQUIRED are shown
 	// under "Awaiting Approval" section
