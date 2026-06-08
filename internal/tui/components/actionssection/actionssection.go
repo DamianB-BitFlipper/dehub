@@ -26,6 +26,11 @@ import (
 
 const SectionType = "action"
 
+var (
+	fetchActionsWorkflowsForSectionRefresh    = data.FetchActionsWorkflows
+	fetchActionsWorkflowRunsForSectionRefresh = data.FetchActionsWorkflowRunsForWorkflow
+)
+
 // Pane identifies one of the three columns in the Actions three-pane layout.
 // It governs which pane consumes navigation keystrokes (Up/Down/PgUp/PgDn/g/G).
 type Pane int
@@ -45,6 +50,11 @@ type Model struct {
 	selectedWorkflow *data.Workflow
 	runsTaskId       string
 	focusedPane      Pane
+	// isRefreshing guards against issuing concurrent section refreshes
+	// (e.g. mashing R, or pressing R while an interval refresh for the
+	// same section is already in flight). It is cleared when a refresh
+	// result lands (success or failure).
+	isRefreshing bool
 }
 
 func NewModel(id int, ctx *context.ProgramContext, cfg config.ActionsSectionConfig, lastUpdated, createdAt time.Time) Model {
@@ -174,6 +184,12 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			}
 			m.UpdateLastUpdated(time.Now())
 		}
+	case SectionActionsRefreshedMsg:
+		cmd = m.applyRefreshedActions(msg)
+	case SectionActionsRefreshFailedMsg:
+		m.isRefreshing = false
+		m.SetIsLoading(false)
+		m.RunsTable.SetIsLoading(false)
 	case tasks.UpdateActionMsg:
 		m.applyActionUpdate(msg)
 	}
@@ -278,6 +294,115 @@ func (m *Model) applyActionUpdate(msg tasks.UpdateActionMsg) {
 	}
 	m.sortRuns()
 	m.RunsTable.SetRows(m.BuildRunRows())
+}
+
+func (m *Model) applyRefreshedActions(msg SectionActionsRefreshedMsg) tea.Cmd {
+	m.isRefreshing = false
+	prevWorkflowID := int64(0)
+	if selected := m.selectedWorkflow; selected != nil {
+		prevWorkflowID = selected.Id
+	}
+	prevRunID := int64(0)
+	if selected := m.SelectedRun(); selected != nil {
+		prevRunID = selected.Id
+	}
+
+	m.Workflows = msg.Workflows
+	m.TotalCount = msg.TotalCount
+	m.SetIsLoading(false)
+	m.Table.SetRows(m.BuildRows())
+	m.restoreWorkflowSelection(prevWorkflowID)
+
+	if msg.HasRuns {
+		if m.selectedWorkflow == nil || m.selectedWorkflow.Id != msg.RunsWorkflowID {
+			m.Runs = nil
+			m.PageInfo = nil
+			m.RunsTable.ResetCurrItem()
+			m.RunsTable.SetRows(nil)
+			if m.selectedWorkflow == nil {
+				m.RunsTable.SetIsLoading(false)
+				m.UpdateLastUpdated(time.Now())
+				m.UpdateTotalItemsCount(m.TotalCount)
+				return nil
+			}
+			m.RunsTable.SetIsLoading(true)
+			m.UpdateLastUpdated(time.Now())
+			m.UpdateTotalItemsCount(m.TotalCount)
+			return tea.Batch(m.fetchWorkflowRuns()...)
+		}
+		m.Runs = msg.Runs
+		m.PageInfo = &msg.PageInfo
+		m.sortRuns()
+		m.RunsTable.SetIsLoading(false)
+		m.RunsTable.SetRows(m.BuildRunRows())
+		m.restoreRunSelection(prevRunID)
+	} else if m.selectedWorkflow == nil {
+		m.Runs = nil
+		m.PageInfo = nil
+		m.RunsTable.SetIsLoading(false)
+		m.RunsTable.SetRows(nil)
+	} else {
+		m.Runs = nil
+		m.PageInfo = nil
+		m.RunsTable.ResetCurrItem()
+		m.RunsTable.SetRows(nil)
+		m.RunsTable.SetIsLoading(true)
+		m.UpdateLastUpdated(time.Now())
+		m.UpdateTotalItemsCount(m.TotalCount)
+		return tea.Batch(m.fetchWorkflowRuns()...)
+	}
+
+	m.UpdateLastUpdated(time.Now())
+	m.UpdateTotalItemsCount(m.TotalCount)
+	return nil
+}
+
+// restoreWorkflowSelection re-selects the workflow with workflowID after a
+// refresh replaced the workflow list. If that workflow is gone (deleted,
+// renamed, or filtered out), it resets the selection to the top rather than
+// reusing the previous cursor index: a stale filtered index can point at an
+// unrelated workflow when the refreshed list reorders or shrinks, silently
+// switching the user's selection.
+func (m *Model) restoreWorkflowSelection(workflowID int64) {
+	workflows := m.filteredWorkflows()
+	idx := -1
+	if workflowID != 0 {
+		for i := range workflows {
+			if workflows[i].Id == workflowID {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 && len(workflows) > 0 {
+		idx = 0
+	}
+	if idx < 0 {
+		m.selectedWorkflow = nil
+		m.Table.ResetCurrItem()
+		return
+	}
+	m.Table.SetCurrItem(idx)
+	workflow := workflows[idx]
+	m.selectedWorkflow = &workflow
+}
+
+func (m *Model) restoreRunSelection(runID int64) {
+	runs := m.filteredRuns()
+	idx := -1
+	if runID != 0 {
+		for i := range runs {
+			if runs[i].Id == runID {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx >= 0 {
+		m.RunsTable.SetCurrItem(idx)
+		return
+	}
+	m.RunsTable.ResetCurrItem()
 }
 
 func (m Model) filteredWorkflows() []data.Workflow {
@@ -434,6 +559,59 @@ func (m *Model) fetchWorkflowRuns() []tea.Cmd {
 	return []tea.Cmd{startCmd, fetchCmd}
 }
 
+func (m *Model) RefreshSectionRows() tea.Cmd {
+	if m == nil || m.RepoName == "" {
+		return nil
+	}
+	// Dedup: if a refresh for this section is already in flight, don't
+	// issue another. The in-flight refresh will deliver fresh data. This
+	// keeps mashing R (or R landing on top of an interval refresh) from
+	// firing concurrent FetchActionsWorkflows requests.
+	if m.isRefreshing {
+		return nil
+	}
+	m.isRefreshing = true
+
+	filters := m.Config.Filters
+	repoName := m.RepoName
+	sectionId := m.Id
+	workflowID := int64(0)
+	if m.selectedWorkflow != nil {
+		workflowID = m.selectedWorkflow.Id
+	}
+	limit := m.Config.Limit
+	if limit == nil {
+		limit = &m.Ctx.Config.Defaults.ActionsLimit
+	}
+
+	return func() tea.Msg {
+		workflows, err := fetchActionsWorkflowsForSectionRefresh(filters)
+		if err != nil {
+			return SectionActionsRefreshFailedMsg{SectionId: sectionId, Err: err}
+		}
+
+		msg := SectionActionsRefreshedMsg{
+			SectionId:  sectionId,
+			Workflows:  workflows.Workflows,
+			TotalCount: workflows.TotalCount,
+		}
+		if workflowID == 0 {
+			return msg
+		}
+
+		runs, err := fetchActionsWorkflowRunsForSectionRefresh(repoName, workflowID, *limit)
+		if err != nil {
+			return SectionActionsRefreshFailedMsg{SectionId: sectionId, Err: err}
+		}
+		msg.Runs = runs.WorkflowRuns
+		msg.RunsTotalCount = runs.TotalCount
+		msg.RunsWorkflowID = workflowID
+		msg.PageInfo = runs.PageInfo
+		msg.HasRuns = true
+		return msg
+	}
+}
+
 func FetchAllSections(
 	ctx *context.ProgramContext,
 	existing []section.Section,
@@ -509,6 +687,25 @@ type SectionActionsFetchedMsg struct {
 	TaskId     string
 }
 
+type SectionActionsRefreshedMsg struct {
+	SectionId      int
+	Workflows      []data.Workflow
+	TotalCount     int
+	Runs           []data.WorkflowRun
+	RunsTotalCount int
+	RunsWorkflowID int64
+	PageInfo       data.PageInfo
+	HasRuns        bool
+}
+
+// SectionActionsRefreshFailedMsg reports a failed section refresh. It is
+// section-scoped so the originating section can clear its in-flight/loading
+// state even though the error is surfaced globally.
+type SectionActionsRefreshFailedMsg struct {
+	SectionId int
+	Err       error
+}
+
 func (m *Model) ResetRows() {
 	m.Workflows = nil
 	m.Runs = nil
@@ -536,6 +733,25 @@ func (m *Model) GetIsLoading() bool {
 }
 
 func (m *Model) SetIsLoading(val bool) { m.IsLoading = val; m.Table.SetIsLoading(val) }
+
+// SetRefreshing prepares the section for a manual refresh: it clears any
+// active local row-filter search (so R behaves consistently with the other
+// sections' refresh, which reset filters) and marks both the workflow table
+// and, when a workflow is selected, the runs table as loading so the panes
+// that will be replaced show spinner feedback while the refresh is in flight.
+func (m *Model) SetRefreshing() {
+	if m.IsLocalSearchFocused() || m.LocalSearchValue != "" {
+		m.LocalSearchValue = ""
+		m.LocalSearchBar.SetValue("")
+		m.SetIsLocalSearching(false)
+		m.Table.ResetCurrItem()
+		m.Table.SetRows(m.BuildRows())
+	}
+	m.SetIsLoading(true)
+	if m.selectedWorkflow != nil {
+		m.RunsTable.SetIsLoading(true)
+	}
+}
 
 func (m Model) GetPagerContent() string {
 	pagerContent := ""

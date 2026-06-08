@@ -168,6 +168,57 @@ func TestSyncSmartFilterWithSearchValue(t *testing.T) {
 	}
 }
 
+func TestToggleOpenClosedFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		searchValue string
+		want        string
+		wantChanged bool
+	}{
+		{
+			name:        "open to closed",
+			searchValue: "repo:owner/repo is:open author:@me",
+			want:        "repo:owner/repo is:closed author:@me",
+			wantChanged: true,
+		},
+		{
+			name:        "closed to open",
+			searchValue: "is:closed label:bug",
+			want:        "is:open label:bug",
+			wantChanged: true,
+		},
+		{
+			name:        "no open closed filter",
+			searchValue: "repo:owner/repo author:@me",
+			want:        "repo:owner/repo author:@me",
+			wantChanged: false,
+		},
+		{
+			name:        "notification state unchanged",
+			searchValue: "repo:owner/repo is:unread",
+			want:        "repo:owner/repo is:unread",
+			wantChanged: false,
+		},
+		{
+			name:        "similar token unchanged",
+			searchValue: "is:opened foo:is:closed",
+			want:        "is:opened foo:is:closed",
+			wantChanged: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := BaseModel{SearchValue: tt.searchValue}
+
+			changed := m.ToggleOpenClosedFilter()
+
+			require.Equal(t, tt.wantChanged, changed)
+			require.Equal(t, tt.want, m.SearchValue)
+		})
+	}
+}
+
 func TestGetSearchValue(t *testing.T) {
 	repoFilter := currentRepoFilter(t)
 

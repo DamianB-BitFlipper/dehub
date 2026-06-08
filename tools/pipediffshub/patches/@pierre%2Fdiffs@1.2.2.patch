@@ -1,8 +1,20 @@
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
-index c51118a690916699ebdac23dabf4e46c5ab04bf4..0ba8fd1edda5fca184a3225835c0fb15d74ee19d 100644
+index c51118a690916699ebdac23dabf4e46c5ab04bf4..881ca557ce47462f95d21570b419015a87f9b98f 100644
 --- a/dist/components/CodeView.js
 +++ b/dist/components/CodeView.js
-@@ -1215,8 +1215,7 @@ var CodeView = class CodeView {
+@@ -694,8 +694,9 @@ var CodeView = class CodeView {
+ 	}
+ 	createOptions(item) {
+ 		const { id: itemId, type: mode } = item;
+-		const options = mode === "file" ? { stickyHeader: this.options.stickyHeaders } : {
+-			stickyHeader: this.options.stickyHeaders,
++		const stickyHeader = item.collapsed === true ? false : this.options.stickyHeaders;
++		const options = mode === "file" ? { stickyHeader } : {
++			stickyHeader,
+ 			hunkSeparators: this.options.hunkSeparators
+ 		};
+ 		const target = options;
+@@ -1215,8 +1216,7 @@ var CodeView = class CodeView {
  		this.renderState.stickyTop = stickyTop;
  		this.renderState.stickyBottom = stickyBottom;
  		this.stickyOffset.style.height = `${stickyTop}px`;
@@ -12,11 +24,79 @@ index c51118a690916699ebdac23dabf4e46c5ab04bf4..0ba8fd1edda5fca184a3225835c0fb15
  		this.stickyContainer.style.top = `${stickyJitter}px`;
  		this.stickyContainer.style.bottom = `${stickyJitter + itemMetrics.diffHeaderHeight}px`;
  	}
+@@ -1323,14 +1323,15 @@ var CodeView = class CodeView {
+ 			const item = this.items[index];
+ 			if (item == null) continue;
+ 			const absoluteItemTop = this.getLayout().paddingTop + item.top;
+-			if (absoluteItemTop + item.height <= scrollTop) continue;
++			const anchorViewportTop = this.getScrollAnchorViewportTop(absoluteItemTop, scrollTop);
++			if (absoluteItemTop + item.height <= anchorViewportTop) continue;
+ 			if (absoluteItemTop >= scrollTop + viewportHeight) break;
+-			if (absoluteItemTop >= scrollTop) return {
++			if (absoluteItemTop >= anchorViewportTop) return {
+ 				type: "item",
+ 				id: item.item.id,
+ 				viewportOffset: absoluteItemTop - scrollTop
+ 			};
+-			const localViewportTop = this.getScrollAnchorViewportTop(absoluteItemTop, scrollTop) - absoluteItemTop;
++			const localViewportTop = anchorViewportTop - absoluteItemTop;
+ 			const lineAnchor = item.instance.getNumericScrollAnchor(localViewportTop);
+ 			if (lineAnchor != null) {
+ 				const absoluteLineTop = absoluteItemTop + lineAnchor.top;
+@@ -1342,6 +1343,14 @@ var CodeView = class CodeView {
+ 					viewportOffset: absoluteLineTop - scrollTop
+ 				};
+ 			}
++			// The item contains the effective viewport anchor point but has no
++			// line-level anchor there (for example, a collapsed file header). The
++			// item itself is therefore the stable anchoring surface.
++			return {
++				type: "item",
++				id: item.item.id,
++				viewportOffset: absoluteItemTop - scrollTop
++			};
+ 		}
+ 	}
+ 	/**
 diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
-index 4aaf6cf..9e8d5d2 100644
+index 925149768e87e5d039897e5bcf1bb739e95395e0..6d45e5f2b7099c647388a559b700e02cc3c2532e 100644
 --- a/dist/components/VirtualizedFileDiff.js
 +++ b/dist/components/VirtualizedFileDiff.js
-@@ -507,12 +507,18 @@ var VirtualizedFileDiff = class extends FileDiff {
+@@ -4,6 +4,7 @@ import { areOptionsEqual } from "../utils/areOptionsEqual.js";
+ import { computeVirtualFileMetrics, getDefaultHunkSeparatorHeight, getVirtualFileHeaderRegion, getVirtualFilePaddingBottom } from "../utils/computeVirtualFileMetrics.js";
+ import { iterateOverDiff } from "../utils/iterateOverDiff.js";
+ import { parseDiffFromFile } from "../utils/parseDiffFromFile.js";
++import { roundToDevicePixel } from "../utils/roundToDevicePixel.js";
+ import { FileDiff } from "./FileDiff.js";
+ 
+ //#region src/components/VirtualizedFileDiff.ts
+@@ -68,6 +69,22 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 			return hasHeightChange;
+ 		}
+ 		this.top = this.getVirtualizedTop();
++		// Collapsed files render only their (custom) header, so the body-line
++		// reconciliation below never runs for them and the estimated box height
++		// (`diffHeaderHeight`) is trusted blindly. When the real header DOM is even
++		// a fraction of a pixel taller/shorter than the estimate, the virtualizer
++		// and the stickyContainer ResizeObserver disagree on every scroll frame,
++		// which manifests as jitter the moment a collapsed header scrolls into the
++		// viewport. Measure the real box height and write it back so the layout
++		// self-heals instead of fighting the ResizeObserver.
++		if (this.options.collapsed === true) {
++			const measuredHeight = roundToDevicePixel(this.fileContainer.getBoundingClientRect().height);
++			if (measuredHeight > 0 && measuredHeight !== this.height) {
++				this.height = measuredHeight;
++				hasHeightChange = true;
++			}
++			return hasHeightChange;
++		}
+ 		if (overflow === "scroll" && this.lineAnnotations.length === 0 && !this.isResizeDebuggingEnabled()) return hasHeightChange;
+ 		const diffStyle = this.getDiffStyle();
+ 		const codeGroups = diffStyle === "split" ? [this.codeDeletions, this.codeAdditions] : [this.codeUnified];
+@@ -504,18 +521,24 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		const lineCount = this.cache.totalLines > 0 ? this.cache.totalLines : this.getExpandedLineCount(fileDiff, diffStyle);
+ 		const headerRegion = getVirtualFileHeaderRegion(this.metrics, disableFileHeader);
+ 		const paddingBottom = fileDiff.hunks.length > 0 ? getVirtualFilePaddingBottom(this.metrics) : 0;
 -		if (fileTop < top - fileHeight || fileTop > bottom) return {
 -			startingLine: 0,
 -			totalLines: 0,
@@ -47,3 +127,6 @@ index 4aaf6cf..9e8d5d2 100644
 +      bufferBefore: 0,
 +      bufferAfter: 0
 +    };
+ 		const estimatedTargetLines = Math.ceil(Math.max(bottom - top, 0) / lineHeight);
+ 		const totalLines = Math.ceil(estimatedTargetLines / hunkLineCount) * hunkLineCount + hunkLineCount;
+ 		const totalHunks = totalLines / hunkLineCount;

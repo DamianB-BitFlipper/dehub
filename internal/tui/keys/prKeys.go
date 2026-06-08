@@ -36,6 +36,7 @@ type PRKeyMap struct {
 	ToggleReviewThread   key.Binding
 	ToggleActivityItems  key.Binding
 	ToggleSmartFiltering key.Binding
+	ToggleOpenClosed     key.Binding
 	SortOrder            key.Binding
 	ViewIssues           key.Binding
 }
@@ -143,6 +144,10 @@ var PRKeys = PRKeyMap{
 	ToggleSmartFiltering: key.NewBinding(
 		key.WithHelp("", "toggle smart filtering"),
 	),
+	ToggleOpenClosed: key.NewBinding(
+		key.WithKeys("T"),
+		key.WithHelp("T", "toggle open/closed"),
+	),
 	SortOrder: key.NewBinding(
 		key.WithKeys("S"),
 		key.WithHelp("S", "sort order"),
@@ -153,6 +158,14 @@ var PRKeys = PRKeyMap{
 }
 
 func PRFullHelp() []key.Binding {
+	return prFullHelp(true)
+}
+
+func PRNotificationFullHelp() []key.Binding {
+	return prFullHelp(false)
+}
+
+func prFullHelp(includeSectionFilters bool) []key.Binding {
 	previewBindings := []key.Binding{}
 	switch prPreviewContext {
 	case PRPreviewContextActivity:
@@ -217,12 +230,16 @@ func PRFullHelp() []key.Binding {
 		PRKeys.ApproveWorkflows,
 	)
 	bindings = append(bindings, previewBindings...)
-	bindings = append(bindings, enabledBindings(
+	sectionBindings := enabledBindings(
 		PRKeys.ToggleReviewThread,
 		PRKeys.ToggleSmartFiltering,
 		PRKeys.SortOrder,
 		PRKeys.ViewIssues,
-	)...)
+	)
+	if includeSectionFilters {
+		sectionBindings = append(sectionBindings, enabledBindings(PRKeys.ToggleOpenClosed)...)
+	}
+	bindings = append(bindings, sectionBindings...)
 	return bindings
 }
 
@@ -303,6 +320,8 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			key = &PRKeys.ToggleActivityItems
 		case "toggleSmartFiltering":
 			key = &PRKeys.ToggleSmartFiltering
+		case "toggleOpenClosed":
+			key = &PRKeys.ToggleOpenClosed
 		case "sortOrder":
 			key = &PRKeys.SortOrder
 		case "viewIssues":

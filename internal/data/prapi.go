@@ -90,7 +90,7 @@ type PullRequestData struct {
 	Repository       Repository
 	Assignees        Assignees      `graphql:"assignees(first: 3)"`
 	Comments         Comments       `graphql:"comments"`
-	ReviewThreads    ReviewThreads  `graphql:"reviewThreads"`
+	ReviewThreads    ReviewThreads  `graphql:"reviewThreads(last: 50)"`
 	Reviews          Reviews        `graphql:"reviews(last: 100)"`
 	ReviewRequests   ReviewRequests `graphql:"reviewRequests(last: 5)"`
 	Files            ChangedFiles   `graphql:"files(first: 5)"`
@@ -266,6 +266,11 @@ type Comments struct {
 
 type ReviewThreads struct {
 	TotalCount int
+	Nodes      []ReviewThread
+}
+
+type ReviewThread struct {
+	IsResolved bool
 }
 
 type Review struct {
@@ -460,13 +465,24 @@ func (e EnrichedPullRequestData) ToPullRequestData() PullRequestData {
 		Reviews:           e.Reviews,
 		ReviewRequests:    e.ReviewRequests,
 		Comments:          Comments{TotalCount: int(e.Comments.TotalCount)},
-		ReviewThreads:     ReviewThreads{TotalCount: len(e.ReviewThreads.Nodes)},
-		IsDraft:           e.IsDraft,
-		Labels:            e.Labels,
-		Files:             e.Files,
+		ReviewThreads: ReviewThreads{
+			TotalCount: len(e.ReviewThreads.Nodes),
+			Nodes:      e.toReviewThreads(),
+		},
+		IsDraft: e.IsDraft,
+		Labels:  e.Labels,
+		Files:   e.Files,
 		// Note: Commits has a different type in EnrichedPullRequestData vs PullRequestData.
 		// Callers that already have primary data should preserve it when needed.
 	}
+}
+
+func (e EnrichedPullRequestData) toReviewThreads() []ReviewThread {
+	threads := make([]ReviewThread, 0, len(e.ReviewThreads.Nodes))
+	for _, thread := range e.ReviewThreads.Nodes {
+		threads = append(threads, ReviewThread{IsResolved: thread.IsResolved})
+	}
+	return threads
 }
 
 func makePullRequestsQuery(query string, sort SearchSort) string {

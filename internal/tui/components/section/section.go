@@ -292,6 +292,23 @@ func (m *BaseModel) SyncSmartFilterWithSearchValue() {
 	m.IsFilteredByCurrentRemote = m.HasCurrentRepoNameInConfiguredFilter()
 }
 
+func (m *BaseModel) ToggleOpenClosedFilter() bool {
+	tokens := strings.Fields(m.SearchValue)
+	for i, token := range tokens {
+		switch token {
+		case "is:open":
+			tokens[i] = "is:closed"
+			m.SearchValue = strings.Join(tokens, " ")
+			return true
+		case "is:closed":
+			tokens[i] = "is:open"
+			m.SearchValue = strings.Join(tokens, " ")
+			return true
+		}
+	}
+	return false
+}
+
 func (m *BaseModel) GetSearchValue() string {
 	searchValue := m.enrichSearchWithTemplateVars()
 	repo, err := repository.Current()

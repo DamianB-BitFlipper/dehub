@@ -212,6 +212,14 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
 			}
 
+		case key.Matches(msg, keys.PRKeys.ToggleOpenClosed):
+			if m.ToggleOpenClosedFilter() {
+				m.SearchBar.SetValue(m.SearchValue)
+				m.SetIsSearching(false)
+				m.ResetRows()
+				return m, tea.Batch(m.FetchNextPageSectionRows()...)
+			}
+
 		case key.Matches(msg, keys.PRKeys.SortOrder):
 			m.ToggleSortOrder()
 			m.updateSortHeader()
@@ -742,6 +750,7 @@ type SectionPullRequestsFetchedMsg struct {
 }
 
 type SectionPullRequestsRefreshedMsg struct {
+	SectionId  int
 	Prs        []prrow.Data
 	TotalCount int
 	PageInfo   data.PageInfo
@@ -883,6 +892,7 @@ func (m *Model) RefreshSectionRows() tea.Cmd {
 	}
 
 	filters := m.GetFilters()
+	sectionId := m.Id
 	limit := m.Config.Limit
 	if limit == nil {
 		limit = &m.Ctx.Config.Defaults.PrsLimit
@@ -900,6 +910,7 @@ func (m *Model) RefreshSectionRows() tea.Cmd {
 		}
 
 		return SectionPullRequestsRefreshedMsg{
+			SectionId:  sectionId,
 			Prs:        prs,
 			TotalCount: res.TotalCount,
 			PageInfo:   res.PageInfo,

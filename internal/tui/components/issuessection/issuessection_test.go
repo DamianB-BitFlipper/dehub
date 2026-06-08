@@ -4,11 +4,67 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dlvhdr/gh-dehub/v4/internal/config"
 	"github.com/dlvhdr/gh-dehub/v4/internal/data"
 	"github.com/dlvhdr/gh-dehub/v4/internal/tui/components/section"
+	"github.com/dlvhdr/gh-dehub/v4/internal/tui/context"
+	"github.com/dlvhdr/gh-dehub/v4/internal/tui/theme"
 )
+
+func newIssueSectionToggleTestContext() *context.ProgramContext {
+	cfg := &config.Config{}
+	cfg.Defaults.IssuesLimit = 30
+	cfg.Theme = &config.ThemeConfig{}
+	thm := *theme.DefaultTheme
+	return &context.ProgramContext{
+		Config: cfg,
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+		StartTask: func(task context.Task) tea.Cmd {
+			return func() tea.Msg { return nil }
+		},
+	}
+}
+
+func TestToggleOpenClosedKeyUpdatesIssueFilters(t *testing.T) {
+	m := NewModel(
+		1,
+		newIssueSectionToggleTestContext(),
+		config.IssuesSectionConfig{Title: "Test", Filters: "repo:owner/repo is:closed author:@me"},
+		time.Now(),
+		time.Now(),
+	)
+	m.Issues = []data.IssueData{{Number: 1, State: "CLOSED"}}
+	m.Table.SetRows(m.BuildRows())
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "T", Code: 'T'})
+	updated := next.(*Model)
+
+	require.NotNil(t, cmd)
+	require.Equal(t, "repo:owner/repo is:open author:@me", updated.SearchValue)
+	require.Equal(t, updated.SearchValue, updated.SearchBar.Value())
+	require.Nil(t, updated.Issues)
+	require.Nil(t, updated.PageInfo)
+}
+
+func TestToggleOpenClosedKeyNoopsWithoutIssueStateFilter(t *testing.T) {
+	m := NewModel(
+		1,
+		newIssueSectionToggleTestContext(),
+		config.IssuesSectionConfig{Title: "Test", Filters: "repo:owner/repo author:@me"},
+		time.Now(),
+		time.Now(),
+	)
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "T", Code: 'T'})
+	updated := next.(*Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "repo:owner/repo author:@me", updated.SearchValue)
+}
 
 func TestSortIssuesUsesLoadedRows(t *testing.T) {
 	oldCreated := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)

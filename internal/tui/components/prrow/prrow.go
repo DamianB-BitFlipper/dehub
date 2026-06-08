@@ -62,11 +62,33 @@ func (pr *PullRequest) renderReviewStatus() string {
 		return reviewCellStyle.Render(constants.ApprovedIcon)
 	}
 
+	if icon, ok := pr.renderReviewThreadStatus(reviewCellStyle); ok {
+		return icon
+	}
+
 	if pr.Data.Primary.Reviews.TotalCount > 0 {
 		return reviewCellStyle.Render(pr.Ctx.Styles.Common.CommentGlyph)
 	}
 
 	return reviewCellStyle.Render(pr.Ctx.Styles.Common.WaitingGlyph)
+}
+
+func (pr *PullRequest) renderReviewThreadStatus(reviewCellStyle lipgloss.Style) (string, bool) {
+	threads := pr.Data.Primary.ReviewThreads.Nodes
+	if len(threads) == 0 {
+		return "", false
+	}
+
+	for _, thread := range threads {
+		if !thread.IsResolved {
+			return reviewCellStyle.Foreground(pr.Ctx.Theme.WarningText).Render(constants.OpenCircleIcon), true
+		}
+	}
+	if len(threads) < pr.Data.Primary.ReviewThreads.TotalCount {
+		return "", false
+	}
+
+	return reviewCellStyle.Foreground(pr.Ctx.Theme.SuccessText).Render(constants.SuccessIcon), true
 }
 
 func (pr *PullRequest) renderState() string {
@@ -186,8 +208,8 @@ func (pr *PullRequest) renderTitle() string {
 		pr.Data.Primary.Number,
 	)
 
-	if badge := pr.renderReviewDecisionBadge(lipgloss.NewStyle()); badge != "" {
-		title = lipgloss.JoinHorizontal(lipgloss.Top, title, " ", badge)
+	if badges := pr.renderTitleBadges(lipgloss.NewStyle()); badges != "" {
+		title = lipgloss.JoinHorizontal(lipgloss.Top, title, " ", badges)
 	}
 
 	return title
@@ -211,8 +233,8 @@ func (pr *PullRequest) renderExtendedTitle(isSelected bool) string {
 			top = lipgloss.JoinHorizontal(lipgloss.Top, top, pr.renderMetadataSeparator(baseStyle), baseStyle.Render(branch))
 		}
 	}
-	if badge := pr.renderReviewDecisionBadge(baseStyle); badge != "" {
-		top = lipgloss.JoinHorizontal(lipgloss.Top, top, pr.renderMetadataSeparator(baseStyle), badge)
+	if badges := pr.renderTitleBadges(baseStyle); badges != "" {
+		top = lipgloss.JoinHorizontal(lipgloss.Top, top, pr.renderMetadataSeparator(baseStyle), badges)
 	}
 	title := pr.Data.Primary.Title
 	var titleColumn table.Column
@@ -241,12 +263,16 @@ func (pr *PullRequest) renderExtendedTitle(isSelected bool) string {
 	return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, top, branches, title))
 }
 
-func (pr *PullRequest) renderReviewDecisionBadge(baseStyle lipgloss.Style) string {
-	if !pr.hasApprovedReview() {
-		return ""
+func (pr *PullRequest) renderTitleBadges(baseStyle lipgloss.Style) string {
+	badges := make([]string, 0, 2)
+	if pr.hasMergeConflicts() {
+		badges = append(badges, baseStyle.Foreground(pr.Ctx.Theme.ErrorText).Render("Conflicts"))
+	}
+	if pr.hasApprovedReview() {
+		badges = append(badges, baseStyle.Foreground(pr.Ctx.Theme.SuccessText).Render("Approved"))
 	}
 
-	return baseStyle.Foreground(pr.Ctx.Theme.SuccessText).Render("Approved")
+	return strings.Join(badges, " ")
 }
 
 func (pr *PullRequest) renderMetadataSeparator(baseStyle lipgloss.Style) string {
@@ -266,6 +292,10 @@ func (pr *PullRequest) hasApprovedReview() bool {
 		}
 	}
 	return false
+}
+
+func (pr *PullRequest) hasMergeConflicts() bool {
+	return pr.Data != nil && pr.Data.Primary != nil && pr.Data.Primary.Mergeable == "CONFLICTING"
 }
 
 func (pr *PullRequest) renderAuthor() string {

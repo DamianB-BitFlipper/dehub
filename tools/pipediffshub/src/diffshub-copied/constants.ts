@@ -7,6 +7,16 @@ export const CODE_VIEW_LAYOUT: CodeViewLayout = {
   paddingBottom: 0,
 };
 
+// Single source of truth for the diff header height. This MUST stay in sync
+// with `itemMetrics.diffHeaderHeight` in CodeViewWrapper: the virtualizer
+// reserves exactly this many pixels for a file's header (and, when collapsed,
+// for the entire file box). If the rendered header DOM is even a fraction of a
+// pixel off from this value, the virtualizer and the stickyContainer
+// ResizeObserver disagree on every scroll frame and the diff visibly jitters
+// the moment a collapsed header scrolls into the viewport. Pinning a fixed
+// `height` (not `min-height`) keeps the estimate and the DOM exactly equal.
+export const CODE_VIEW_DIFF_HEADER_HEIGHT = 42;
+
 export const CODE_VIEW_CUSTOM_CSS = `
 [data-diffs-header] {
   container-type: scroll-state;
@@ -14,13 +24,24 @@ export const CODE_VIEW_CUSTOM_CSS = `
 }
 
 [data-diffs-header='custom'] {
+  box-sizing: border-box;
   background-color: var(--diffs-bg);
   align-items: center;
-  min-height: calc(1lh + var(--diffs-gap-block, var(--diffs-gap-fallback)) * 3);
+  height: ${CODE_VIEW_DIFF_HEADER_HEIGHT}px;
+  min-height: ${CODE_VIEW_DIFF_HEADER_HEIGHT}px;
+  max-height: ${CODE_VIEW_DIFF_HEADER_HEIGHT}px;
   z-index: 2;
   display: flex;
+}
+
+[data-diffs-header='custom'][data-sticky] {
   position: sticky;
   top: 0;
+}
+
+[data-diffs-header='custom'] > * {
+  min-height: 0;
+  max-height: 100%;
 }
 
 @container sticky-header scroll-state(stuck: top) {

@@ -520,11 +520,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Refresh):
 			if currSection != nil {
 				data.ClearEnrichmentCache()
-				currSection.ResetFilters()
-				currSection.ResetRows()
-				m.syncSidebar()
-				currSection.SetIsLoading(true)
-				cmds = append(cmds, currSection.FetchNextPageSectionRows()...)
+				if actionsSection, ok := currSection.(*actionssection.Model); ok {
+					actionsSection.SetRefreshing()
+					cmds = append(cmds, actionsSection.RefreshSectionRows())
+				} else {
+					currSection.ResetFilters()
+					currSection.ResetRows()
+					m.syncSidebar()
+					currSection.SetIsLoading(true)
+					cmds = append(cmds, currSection.FetchNextPageSectionRows()...)
+				}
 			}
 
 		case key.Matches(msg, m.keys.Redraw):
@@ -1301,6 +1306,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil && msg.target.kind != visibleRefreshRepoBranches {
 			log.Error("failed refreshing visible resource", "kind", msg.target.kind, "err", msg.err)
+			// Clear the section's in-flight/loading state so a failed
+			// interval refresh doesn't wedge future refreshes.
+			if msg.target.kind == visibleRefreshActionsSection {
+				cmds = append(cmds, m.updateSection(msg.target.sectionId, actionssection.SectionType,
+					actionssection.SectionActionsRefreshFailedMsg{SectionId: msg.target.sectionId, Err: msg.err}))
+			}
 			cmds = append(cmds, m.reconcileVisibleRefreshes())
 			break
 		}
@@ -1315,12 +1326,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.syncSidebar())
 				cmds = append(cmds, m.fetchCurrentPRPreviewRefresh())
 			}
+		case visibleRefreshActionsSection:
+			if sectionMsg, ok := msg.data.(actionssection.SectionActionsRefreshedMsg); ok {
+				cmds = append(cmds, m.updateSection(msg.target.sectionId, actionssection.SectionType, sectionMsg))
+				cmds = append(cmds, m.syncActionsSelection())
+			}
 		case visibleRefreshRepoBranches:
 			if branchMsg, ok := msg.data.(prssection.RepoBranches); ok {
 				cmds = append(cmds, m.applyRepoBranchesRefresh(branchMsg, msg.target.sectionId))
 			}
 		}
 		cmds = append(cmds, m.reconcileVisibleRefreshes())
+
+	case actionssection.SectionActionsRefreshedMsg:
+		// Manual refresh (R) returns this bare message. Route it back to
+		// the section that issued the refresh using its SectionId so that
+		// switching sections (or away from the Actions view) before the
+		// fetch completes doesn't apply the result to the wrong section.
+		cmds = append(cmds, m.updateSection(msg.SectionId, actionssection.SectionType, msg))
+		if currSection != nil && currSection.GetId() == msg.SectionId &&
+			m.ctx.View == config.ActionsView {
+			cmds = append(cmds, m.syncActionsSelection())
+		}
+		return m, tea.Batch(cmds...)
+
+	case actionssection.SectionActionsRefreshFailedMsg:
+		// Clear the originating section's in-flight/loading state, then
+		// surface the error globally.
+		cmds = append(cmds, m.updateSection(msg.SectionId, actionssection.SectionType, msg))
+		m.messagePopup = newErrorMessagePopup(msg.Err)
+		return m, tea.Batch(cmds...)
 
 	case notificationPRFetchedMsg:
 		if msg.Err == nil {
@@ -3340,7 +3375,8 @@ func shouldSyncActionsSelection(msg tea.Msg) bool {
 	case tea.KeyMsg,
 		tea.WindowSizeMsg,
 		actionssection.SectionWorkflowsFetchedMsg,
-		actionssection.SectionActionsFetchedMsg:
+		actionssection.SectionActionsFetchedMsg,
+		actionssection.SectionActionsRefreshedMsg:
 		return true
 	}
 	return false
@@ -3683,9 +3719,10 @@ type intervalRefresh time.Time
 type visibleRefreshKind string
 
 const (
-	visibleRefreshPRPreview    visibleRefreshKind = "pr-preview"
-	visibleRefreshPRSection    visibleRefreshKind = "pr-section"
-	visibleRefreshRepoBranches visibleRefreshKind = "repo-branches"
+	visibleRefreshPRPreview      visibleRefreshKind = "pr-preview"
+	visibleRefreshPRSection      visibleRefreshKind = "pr-section"
+	visibleRefreshActionsSection visibleRefreshKind = "actions-section"
+	visibleRefreshRepoBranches   visibleRefreshKind = "repo-branches"
 )
 
 type visibleRefreshTarget struct {
@@ -3769,6 +3806,20 @@ func (m *Model) visibleRefreshTargets() []visibleRefreshTarget {
 			targets = append(targets, visibleRefreshTarget{
 				key:       key,
 				kind:      visibleRefreshPRSection,
+				sectionId: currSection.GetId(),
+				interval:  time.Minute * time.Duration(m.ctx.Config.Defaults.RefetchIntervalMinutes),
+			})
+		}
+	}
+
+	if m.ctx != nil && m.ctx.Config != nil && m.ctx.View == config.ActionsView &&
+		m.ctx.Config.Defaults.RefetchIntervalMinutes > 0 {
+		currSection, ok := m.getCurrSection().(*actionssection.Model)
+		if ok && currSection != nil && !currSection.IsSearchFocused() && !currSection.IsPromptConfirmationFocused() {
+			key := fmt.Sprintf("actions-section:%d:%s", currSection.GetId(), currSection.GetFilters())
+			targets = append(targets, visibleRefreshTarget{
+				key:       key,
+				kind:      visibleRefreshActionsSection,
 				sectionId: currSection.GetId(),
 				interval:  time.Minute * time.Duration(m.ctx.Config.Defaults.RefetchIntervalMinutes),
 			})
@@ -3954,6 +4005,31 @@ func (m *Model) fetchVisibleRefresh(target visibleRefreshTarget) tea.Cmd {
 			msg := cmd()
 			if errMsg, ok := msg.(constants.ErrMsg); ok {
 				return visibleRefreshFetchedMsg{target: target, err: errMsg.Err}
+			}
+			return visibleRefreshFetchedMsg{target: target, data: msg}
+		}
+	case visibleRefreshActionsSection:
+		if target.sectionId < 0 || target.sectionId >= len(m.actions) {
+			return nil
+		}
+		actionsSection, ok := m.actions[target.sectionId].(*actionssection.Model)
+		if !ok {
+			return nil
+		}
+		cmd := actionsSection.RefreshSectionRows()
+		if cmd == nil {
+			// A refresh for this section is already in flight (e.g. a
+			// manual R). Emit an empty fetched message so the visible
+			// refresh scheduler clears this target's key and can
+			// reschedule; the in-flight refresh delivers the data.
+			return func() tea.Msg {
+				return visibleRefreshFetchedMsg{target: target}
+			}
+		}
+		return func() tea.Msg {
+			msg := cmd()
+			if failed, ok := msg.(actionssection.SectionActionsRefreshFailedMsg); ok {
+				return visibleRefreshFetchedMsg{target: target, err: failed.Err}
 			}
 			return visibleRefreshFetchedMsg{target: target, data: msg}
 		}

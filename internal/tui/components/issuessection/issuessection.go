@@ -126,6 +126,14 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
 			}
 
+		case key.Matches(msg, keys.IssueKeys.ToggleOpenClosed):
+			if m.ToggleOpenClosedFilter() {
+				m.SearchBar.SetValue(m.SearchValue)
+				m.SetIsSearching(false)
+				m.ResetRows()
+				return m, tea.Batch(m.FetchNextPageSectionRows()...)
+			}
+
 		case key.Matches(msg, keys.IssueKeys.SortOrder):
 			m.ToggleSortOrder()
 			m.updateSortHeader()

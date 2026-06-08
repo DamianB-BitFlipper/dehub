@@ -47,6 +47,58 @@ func newTestModel(action string) Model {
 	return m
 }
 
+func newPRSectionToggleTestContext() *context.ProgramContext {
+	cfg := &config.Config{}
+	cfg.Defaults.PrsLimit = 30
+	cfg.Theme = &config.ThemeConfig{}
+	thm := *theme.DefaultTheme
+	return &context.ProgramContext{
+		Config: cfg,
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+		StartTask: func(task context.Task) tea.Cmd {
+			return func() tea.Msg { return nil }
+		},
+	}
+}
+
+func TestToggleOpenClosedKeyUpdatesPRFilters(t *testing.T) {
+	m := NewModel(
+		1,
+		newPRSectionToggleTestContext(),
+		config.PrsSectionConfig{Title: "Test", Filters: "repo:owner/repo is:open author:@me"},
+		time.Now(),
+		time.Now(),
+	)
+	m.Prs = []prrow.Data{{Primary: &data.PullRequestData{Number: 1}}}
+	m.Table.SetRows(m.BuildRows())
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "T", Code: 'T'})
+	updated := next.(*Model)
+
+	require.NotNil(t, cmd)
+	require.Equal(t, "repo:owner/repo is:closed author:@me", updated.SearchValue)
+	require.Equal(t, updated.SearchValue, updated.SearchBar.Value())
+	require.Nil(t, updated.Prs)
+	require.Nil(t, updated.PageInfo)
+}
+
+func TestToggleOpenClosedKeyNoopsWithoutPRStateFilter(t *testing.T) {
+	m := NewModel(
+		1,
+		newPRSectionToggleTestContext(),
+		config.PrsSectionConfig{Title: "Test", Filters: "repo:owner/repo author:@me"},
+		time.Now(),
+		time.Now(),
+	)
+
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "T", Code: 'T'})
+	updated := next.(*Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "repo:owner/repo author:@me", updated.SearchValue)
+}
+
 func TestCreatePRBranchesFetchedIgnoresStaleResult(t *testing.T) {
 	m := newTestModel("create_pr")
 	m.SearchValue = "repo:owner/current is:open"

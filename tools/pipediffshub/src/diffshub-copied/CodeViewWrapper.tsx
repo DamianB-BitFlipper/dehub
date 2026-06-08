@@ -25,7 +25,11 @@ import {
 } from 'react';
 
 import type { AvatarName } from './annotation-shared';
-import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from './constants';
+import {
+  CODE_VIEW_CUSTOM_CSS,
+  CODE_VIEW_DIFF_HEADER_HEIGHT,
+  CODE_VIEW_LAYOUT,
+} from './constants';
 import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
 import type {
@@ -447,7 +451,7 @@ export const CodeViewWrapper = memo(function CodeViewWrapper({
         itemMetrics: {
           hunkLineCount: 1,
           lineHeight: 18,
-          diffHeaderHeight: 42,
+          diffHeaderHeight: CODE_VIEW_DIFF_HEADER_HEIGHT,
           spacing: 8,
           // NOTE: Do NOT set `paddingBottom: 0` here. Each rendered file box
           // includes 8px of bottom spacing in the DOM; omitting it from the

@@ -97,10 +97,10 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		// Include PR or Issue keys when viewing that subject type
 		switch notificationSubject {
 		case NotificationSubjectPR:
-			additionalKeys = append(additionalKeys, PRFullHelp()...)
+			additionalKeys = append(additionalKeys, PRNotificationFullHelp()...)
 			customKeys = append(customKeys, CustomPRBindings...)
 		case NotificationSubjectIssue:
-			additionalKeys = append(additionalKeys, IssueFullHelp()...)
+			additionalKeys = append(additionalKeys, IssueNotificationFullHelp()...)
 			customKeys = append(customKeys, CustomIssueBindings...)
 		}
 	case config.ActionsView:

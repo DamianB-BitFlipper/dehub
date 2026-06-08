@@ -425,6 +425,53 @@ func TestRenderTitleIncludesApprovedReview(t *testing.T) {
 	}
 }
 
+func TestRenderTitleIncludesMergeConflicts(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			Title:     "Fix sandbox webhook logic",
+			Number:    2456,
+			State:     "OPEN",
+			Mergeable: "CONFLICTING",
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{
+				Ui: config.UIThemeConfig{Table: config.TableUIThemeConfig{Compact: true}},
+			}},
+			Theme: *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderTitle())
+
+	if !strings.Contains(got, "Conflicts") {
+		t.Fatalf("expected merge conflicts in title, got %q", got)
+	}
+}
+
+func TestRenderTitleIncludesMergeConflictsAndApprovedReview(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			Title:          "Fix sandbox webhook logic",
+			Number:         2456,
+			State:          "OPEN",
+			Mergeable:      "CONFLICTING",
+			ReviewDecision: "APPROVED",
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{
+				Ui: config.UIThemeConfig{Table: config.TableUIThemeConfig{Compact: true}},
+			}},
+			Theme: *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderTitle())
+
+	if !strings.Contains(got, "Conflicts Approved") {
+		t.Fatalf("expected merge conflicts and approved review in title, got %q", got)
+	}
+}
+
 func TestRenderReviewStatusShowsApprovedReview(t *testing.T) {
 	pr := &PullRequest{
 		Data: &Data{Primary: &data.PullRequestData{
@@ -468,6 +515,102 @@ func TestRenderReviewStatusChangesRequestedPrecedence(t *testing.T) {
 	}
 }
 
+func TestRenderReviewStatusShowsUnresolvedThread(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			ReviewThreads: data.ReviewThreads{
+				TotalCount: 2,
+				Nodes: []data.ReviewThread{
+					{IsResolved: true},
+					{IsResolved: false},
+				},
+			},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderReviewStatus())
+
+	if got != constants.OpenCircleIcon {
+		t.Fatalf("expected unresolved thread status, got %q", got)
+	}
+}
+
+func TestRenderReviewStatusShowsResolvedThreads(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			ReviewThreads: data.ReviewThreads{
+				TotalCount: 2,
+				Nodes: []data.ReviewThread{
+					{IsResolved: true},
+					{IsResolved: true},
+				},
+			},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderReviewStatus())
+
+	if got != constants.SuccessIcon {
+		t.Fatalf("expected resolved thread status, got %q", got)
+	}
+}
+
+func TestRenderReviewStatusDoesNotResolvePartialThreadData(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			ReviewThreads: data.ReviewThreads{
+				TotalCount: 3,
+				Nodes: []data.ReviewThread{
+					{IsResolved: true},
+					{IsResolved: true},
+				},
+			},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderReviewStatus())
+
+	if got == constants.SuccessIcon {
+		t.Fatalf("expected incomplete thread data not to render resolved status")
+	}
+}
+
+func TestRenderReviewStatusApprovalPrecedesThreadStatus(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			ReviewDecision: "APPROVED",
+			ReviewThreads: data.ReviewThreads{
+				TotalCount: 1,
+				Nodes: []data.ReviewThread{
+					{IsResolved: false},
+				},
+			},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+	}
+
+	got := ansi.Strip(pr.renderReviewStatus())
+
+	if got != constants.ApprovedIcon {
+		t.Fatalf("expected approved review status, got %q", got)
+	}
+}
+
 func TestRenderExtendedTitleIncludesApprovedReviewDecision(t *testing.T) {
 	pr := &PullRequest{
 		Data: &Data{Primary: &data.PullRequestData{
@@ -490,6 +633,31 @@ func TestRenderExtendedTitleIncludesApprovedReviewDecision(t *testing.T) {
 
 	if !strings.Contains(got, "Approved") || strings.Contains(got, constants.ApprovedIcon+" Approved") {
 		t.Fatalf("expected approved review decision in extended title, got %q", got)
+	}
+}
+
+func TestRenderExtendedTitleIncludesMergeConflicts(t *testing.T) {
+	pr := &PullRequest{
+		Data: &Data{Primary: &data.PullRequestData{
+			Title:       "Fix sandbox webhook logic",
+			Number:      2456,
+			State:       "OPEN",
+			Mergeable:   "CONFLICTING",
+			HeadRefName: "fix/eval-sandbox-race",
+			BaseRefName: "develop",
+			Repository:  data.Repository{NameWithOwner: "owner/repo"},
+		}},
+		Ctx: &context.ProgramContext{
+			Config: &config.Config{Theme: &config.ThemeConfig{}},
+			Theme:  *theme.DefaultTheme,
+		},
+		Columns: []table.Column{{Grow: boolPtr(true), ComputedWidth: 80}},
+	}
+
+	got := ansi.Strip(pr.renderExtendedTitle(false))
+
+	if !strings.Contains(got, "Conflicts") {
+		t.Fatalf("expected merge conflicts in extended title, got %q", got)
 	}
 }
 

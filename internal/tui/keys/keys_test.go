@@ -93,6 +93,10 @@ func TestFullHelpIncludesPRKeysForPRSubject(t *testing.T) {
 	if !found {
 		t.Error("expected PR key 'toggle open/close' to be present when viewing PR notification")
 	}
+	found = findKeyByHelp(allKeys, "toggle open/closed")
+	if found {
+		t.Error("expected PR section filter key 'toggle open/closed' to be absent when viewing PR notification")
+	}
 
 	// Clean up
 	SetNotificationSubject(NotificationSubjectNone)
@@ -131,6 +135,10 @@ func TestFullHelpIncludesIssueKeysForIssueSubject(t *testing.T) {
 	found = findKeyByHelp(allKeys, "toggle open/close")
 	if !found {
 		t.Error("expected Issue key 'toggle open/close' to be present when viewing Issue notification")
+	}
+	found = findKeyByHelp(allKeys, "toggle open/closed")
+	if found {
+		t.Error("expected Issue section filter key 'toggle open/closed' to be absent when viewing Issue notification")
 	}
 
 	// Clean up
@@ -195,6 +203,10 @@ func TestFullHelpForPRViewDoesNotIncludeNotificationKeys(t *testing.T) {
 	if !found {
 		t.Error("expected PR key 'open PR URL' to be present in PR view")
 	}
+	found = findKeyByHelp(allKeys, "toggle open/closed")
+	if !found {
+		t.Error("expected PR section filter key 'toggle open/closed' to be present in PR view")
+	}
 	found = findKeyByHelp(allKeys, "watch checks")
 	if found {
 		t.Error("expected PR key 'watch checks' to be removed from PR view")
@@ -204,6 +216,17 @@ func TestFullHelpForPRViewDoesNotIncludeNotificationKeys(t *testing.T) {
 	found = findKeyByHelp(allKeys, "toggle bookmark")
 	if found {
 		t.Error("expected notification key 'toggle bookmark' to NOT be present in PR view")
+	}
+}
+
+func TestFullHelpForIssueViewIncludesOpenClosedFilter(t *testing.T) {
+	keymap := CreateKeyMapForView(config.IssuesView)
+	SetNotificationSubject(NotificationSubjectNone)
+
+	allKeys := flattenHelp(keymap.FullHelp())
+	found := findKeyByHelp(allKeys, "toggle open/closed")
+	if !found {
+		t.Error("expected Issue section filter key 'toggle open/closed' to be present in Issue view")
 	}
 }
 
@@ -284,8 +307,10 @@ func TestDefaultArrowKeybindings(t *testing.T) {
 	requireKeys(t, PRKeys.ToggleActivityItems, "t")
 	requireKeys(t, Keys.Refresh, "R")
 	requireKeys(t, PRKeys.RequestReview, "r")
+	requireKeys(t, PRKeys.ToggleOpenClosed, "T")
 	requireKeys(t, PRKeys.SortOrder, "S")
 	requireKeys(t, PRKeys.OpenURL, "O")
+	requireKeys(t, IssueKeys.ToggleOpenClosed, "T")
 	requireKeys(t, IssueKeys.SortOrder, "S")
 	requireKeys(t, ActionsKeys.SortOrder, "S")
 	requireKeys(t, ActionsKeys.Rerun, "ctrl+r")
@@ -441,6 +466,79 @@ func TestRebindPRKeys_OpenPrUrlBuiltin(t *testing.T) {
 	}
 	if PRKeys.OpenURL.Help().Desc != "open pasted PR" {
 		t.Errorf("expected help to be updated, got %q", PRKeys.OpenURL.Help().Desc)
+	}
+}
+
+func TestRebindPRKeys_ToggleOpenClosedBuiltin(t *testing.T) {
+	origKeys := PRKeys.ToggleOpenClosed.Keys()
+	origHelp := PRKeys.ToggleOpenClosed.Help().Desc
+	defer func() {
+		PRKeys.ToggleOpenClosed.SetKeys(origKeys...)
+		PRKeys.ToggleOpenClosed.SetHelp(origKeys[0], origHelp)
+	}()
+
+	err := rebindPRKeys([]config.Keybinding{
+		{Builtin: "toggleOpenClosed", Key: "U", Name: "toggle state filter"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	keys := PRKeys.ToggleOpenClosed.Keys()
+	if len(keys) != 1 || keys[0] != "U" {
+		t.Errorf("expected key to be rebound to U, got %v", keys)
+	}
+	if PRKeys.ToggleOpenClosed.Help().Desc != "toggle state filter" {
+		t.Errorf("expected help to be updated, got %q", PRKeys.ToggleOpenClosed.Help().Desc)
+	}
+}
+
+func TestRebindIssueKeys_ToggleOpenClosedBuiltin(t *testing.T) {
+	origKeys := IssueKeys.ToggleOpenClosed.Keys()
+	origHelp := IssueKeys.ToggleOpenClosed.Help().Desc
+	defer func() {
+		IssueKeys.ToggleOpenClosed.SetKeys(origKeys...)
+		IssueKeys.ToggleOpenClosed.SetHelp(origKeys[0], origHelp)
+	}()
+
+	err := rebindIssueKeys([]config.Keybinding{
+		{Builtin: "toggleOpenClosed", Key: "U", Name: "toggle state filter"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	keys := IssueKeys.ToggleOpenClosed.Keys()
+	if len(keys) != 1 || keys[0] != "U" {
+		t.Errorf("expected key to be rebound to U, got %v", keys)
+	}
+	if IssueKeys.ToggleOpenClosed.Help().Desc != "toggle state filter" {
+		t.Errorf("expected help to be updated, got %q", IssueKeys.ToggleOpenClosed.Help().Desc)
+	}
+}
+
+func TestRebindIssueKeys_ToggleSmartFilteringBuiltin(t *testing.T) {
+	origKeys := IssueKeys.ToggleSmartFiltering.Keys()
+	origHelpKey := IssueKeys.ToggleSmartFiltering.Help().Key
+	origHelp := IssueKeys.ToggleSmartFiltering.Help().Desc
+	defer func() {
+		IssueKeys.ToggleSmartFiltering.SetKeys(origKeys...)
+		IssueKeys.ToggleSmartFiltering.SetHelp(origHelpKey, origHelp)
+	}()
+
+	err := rebindIssueKeys([]config.Keybinding{
+		{Builtin: "toggleSmartFiltering", Key: "S", Name: "toggle smart filtering"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	keys := IssueKeys.ToggleSmartFiltering.Keys()
+	if len(keys) != 1 || keys[0] != "S" {
+		t.Errorf("expected key to be rebound to S, got %v", keys)
+	}
+	if IssueKeys.ToggleSmartFiltering.Help().Desc != "toggle smart filtering" {
+		t.Errorf("expected help to be updated, got %q", IssueKeys.ToggleSmartFiltering.Help().Desc)
 	}
 }
 
