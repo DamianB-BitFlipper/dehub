@@ -25,22 +25,26 @@ func ParseJobLogs(jobLogs string) []data.LogsWithTime {
 	var lastTime time.Time
 	var err error
 	var name, step string
-	count, depth := 0, 0
+	depth := 0
 
 	for line := range lines {
 		fields := strings.SplitN(line, string('\t'), 3)
 
-		if count == 0 {
+		// Lines are expected to look like "job\tstep\ttimestamp log...";
+		// lines with fewer fields (blank/diagnostic output) are kept as-is.
+		rest := line
+		if len(fields) == 3 {
 			name = fields[0]
 			step = fields[1]
+			rest = fields[2]
+
+			if name != "" && step != "" {
+				line = strings.Replace(line, name+string('\t'), "", 1)
+				line = strings.Replace(line, step+string('\t'), "", 1)
+			}
 		}
 
-		if name != "" && step != "" {
-			line = strings.Replace(line, name+string('\t'), "", 1)
-			line = strings.Replace(line, step+string('\t'), "", 1)
-		}
-
-		dateAndLog := strings.SplitN(fields[2], " ", 2)
+		dateAndLog := strings.SplitN(rest, " ", 2)
 		var lineDate time.Time
 		if len(dateAndLog) == 2 {
 			lineDate, err = time.Parse(time.RFC3339, dateAndLog[0])

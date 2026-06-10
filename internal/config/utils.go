@@ -78,8 +78,9 @@ func MergeColumnConfigs(defaultCfg, sectionCfg ColumnConfig) ColumnConfig {
 
 func TruncateCommand(cmd string) string {
 	cmd = strings.ReplaceAll(cmd, "\n", "")
-	if len(cmd) > 30 {
-		return cmd[:30] + "..."
+	runes := []rune(cmd)
+	if len(runes) > 30 {
+		return string(runes[:30]) + "..."
 	}
 	return cmd
 }

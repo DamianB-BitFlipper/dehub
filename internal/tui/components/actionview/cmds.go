@@ -101,7 +101,20 @@ func (m model) fetchPRChecksWithCursor(prNumber string, cursor string) tea.Msg {
 		return workflowRunsFetchedMsg{repo: m.repo, prNumber: prNumber, err: errors.New("pull request not found")}
 	}
 
-	nodes := resp.Resource.PullRequest.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes
+	commits := resp.Resource.PullRequest.Commits.Nodes
+	if len(commits) == 0 {
+		// A PR with no commits has no checks; report success with no runs
+		// instead of panicking on the empty slice.
+		return workflowRunsFetchedMsg{
+			repo:      m.repo,
+			prNumber:  prNumber,
+			rateLimit: resp.RateLimit,
+			pr:        resp.Resource.PullRequest,
+			runs:      []data.WorkflowRun{},
+		}
+	}
+
+	nodes := commits[0].Commit.StatusCheckRollup.Contexts.Nodes
 	runs := makeWorkflowRuns(nodes)
 
 	return workflowRunsFetchedMsg{
@@ -166,15 +179,26 @@ func (m *model) makeFetchJobLogsCmd() tea.Cmd {
 	log.Info("fetching job logs", "job", ji.job.Name)
 	ji.loadingLogs = true
 	ji.initiatedLogsFetch = true
+
+	// Snapshot everything the closure needs *now*: it runs on a command
+	// goroutine while the Update loop may concurrently reassign ji.job
+	// (interval refetches) or resize the panes — reading them later would
+	// be a data race.
+	jobId := ji.job.Id
+	jobKind := ji.job.Kind
+	jobTitle := ji.job.Title
+	jobLink := ji.job.Link
+	repo := m.repo
+	logsWidth := m.logsWidth()
 	return func() tea.Msg {
-		if ji.job.Kind == data.JobKindStatusContext {
+		if jobKind == data.JobKindStatusContext {
 			return nil
 		}
-		if ji.job.Title != "" || ji.job.Kind == data.JobKindCheckRun ||
-			ji.job.Kind == data.JobKindExternal {
-			output, err := api.FetchCheckRunOutput(m.repo, ji.job.Id)
+		if jobTitle != "" || jobKind == data.JobKindCheckRun ||
+			jobKind == data.JobKindExternal {
+			output, err := api.FetchCheckRunOutput(repo, jobId)
 			if err != nil {
-				log.Error("error fetching check run output", "link", ji.job.Link, "err", err)
+				log.Error("error fetching check run output", "link", jobLink, "err", err)
 				return nil
 			}
 			text := "# " + output.Output.Title
@@ -184,14 +208,14 @@ func (m *model) makeFetchJobLogsCmd() tea.Cmd {
 			text += output.Output.Text
 			renderedText, err := parser.ParseRunOutputMarkdown(
 				text,
-				m.logsWidth(),
+				logsWidth,
 			)
 			if err != nil {
-				log.Error("failed rendering as markdown", "link", ji.job.Link, "err", err)
+				log.Error("failed rendering as markdown", "link", jobLink, "err", err)
 				renderedText = text
 			}
 			return checkRunOutputFetchedMsg{
-				jobId:        ji.job.Id,
+				jobId:        jobId,
 				title:        output.Output.Title,
 				description:  output.Output.Description,
 				renderedText: renderedText,
@@ -199,7 +223,7 @@ func (m *model) makeFetchJobLogsCmd() tea.Cmd {
 		}
 
 		// Kind is JobKindGithubActions
-		cmd := exec.Command("gh", "run", "view", "-R", m.repo, "--log", "--job", ji.job.Id)
+		cmd := exec.Command("gh", "run", "view", "-R", repo, "--log", "--job", jobId)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		jobLogsRes, err := cmd.Output()
@@ -211,10 +235,10 @@ func (m *model) makeFetchJobLogsCmd() tea.Cmd {
 			//   -H "Accept: application/vnd.github+json" \
 			//   -H "X-GitHub-Api-Version: 2022-11-28" \
 			//   /repos/rapidsai/cuml/actions/jobs/46882393014/logs
-			log.Error("error fetching job logs", "kind", ji.job.Kind, "link",
-				ji.job.Link, "err", err, "stderr", stderr.String())
+			log.Error("error fetching job logs", "kind", jobKind, "link",
+				jobLink, "err", err, "stderr", stderr.String())
 			return jobLogsFetchedMsg{
-				jobId:  ji.job.Id,
+				jobId:  jobId,
 				err:    err,
 				stderr: stderr.String(),
 			}
@@ -223,13 +247,13 @@ func (m *model) makeFetchJobLogsCmd() tea.Cmd {
 		log.Debug(
 			"success fetching job logs",
 			"link",
-			ji.job.Link,
+			jobLink,
 			"bytes",
 			len(jobLogsRes),
 		)
 
 		return jobLogsFetchedMsg{
-			jobId: ji.job.Id,
+			jobId: jobId,
 			logs:  parser.ParseJobLogs(jobLogs),
 		}
 	}
@@ -480,27 +504,36 @@ func jobKind(cr api.CheckRun) data.JobKind {
 	return kind
 }
 
+// runKey uniquely identifies a workflow run for grouping/merging. Keying by
+// RunNumber alone collides: non-GHA check suites (Vercel, codecov, ...) all
+// report RunNumber 0, and two distinct workflows can share a run number.
+// Include the workflow/app name to disambiguate.
+func runKey(name string, runNumber int) string {
+	return fmt.Sprintf("%s/%d", name, runNumber)
+}
+
 func (m *model) mergeWorkflowRuns(msg workflowRunsFetchedMsg) {
-	runsMap := make(map[int]data.WorkflowRun)
+	runsMap := make(map[string]data.WorkflowRun)
 
 	// start with existing workflow runs to keep order and
 	// prevent the UI from jumping
 	for _, run := range m.workflowRuns {
-		runsMap[run.RunNumber] = run
+		runsMap[runKey(run.Name, run.RunNumber)] = run
 	}
 
 	for _, run := range msg.runs {
-		existing, ok := runsMap[run.RunNumber]
+		key := runKey(run.Name, run.RunNumber)
+		existing, ok := runsMap[key]
 
 		// run is new, no need to merge its jobs with the existing one
 		if !ok {
-			runsMap[run.RunNumber] = run
+			runsMap[key] = run
 			continue
 		}
 
 		// run already exists, merge its jobs with the existing one
 		existing.Jobs = append(existing.Jobs, run.Jobs...)
-		runsMap[run.RunNumber] = existing
+		runsMap[key] = existing
 	}
 
 	runs := make([]data.WorkflowRun, 0)
@@ -521,14 +554,14 @@ func (m *model) mergeWorkflowRuns(msg workflowRunsFetchedMsg) {
 // sort jobs by their status and creation time etc.
 func makeWorkflowRuns(nodes []api.ContextNode) []data.WorkflowRun {
 	checkRuns := filterForCheckRuns(nodes)
-	runsMap := make(map[int]data.WorkflowRun)
+	runsMap := make(map[string]data.WorkflowRun)
 
 	for _, checkRun := range checkRuns {
 		job := makeWorkflowJob(checkRun)
 
 		wfRunNumber := checkRun.CheckSuite.WorkflowRun.RunNumber
-		// wfName := workflowName(checkRun)
-		run, ok := runsMap[wfRunNumber]
+		key := runKey(workflowName(checkRun), wfRunNumber)
+		run, ok := runsMap[key]
 		if ok {
 			run.Jobs = append(run.Jobs, job)
 		} else {
@@ -536,12 +569,12 @@ func makeWorkflowRuns(nodes []api.ContextNode) []data.WorkflowRun {
 			run.Jobs = []data.WorkflowJob{job}
 		}
 
-		runsMap[wfRunNumber] = run
+		runsMap[key] = run
 	}
 
 	statusContextJobs := makeStatusContextJobs(nodes)
 	if len(statusContextJobs) > 0 {
-		runsMap[-1] = data.WorkflowRun{
+		runsMap[runKey("Status checks", -1)] = data.WorkflowRun{
 			Id:        "status-contexts",
 			Name:      "Status checks",
 			Workflow:  "Status checks",
@@ -761,7 +794,9 @@ func (m *model) rerunJob(runId string, jobId string) []tea.Cmd {
 	cmds := make([]tea.Cmd, 0)
 	ri := m.getRunItemById(runId)
 	ji := m.getJobItemById(jobId)
-	if ri == nil && ji == nil {
+	// ji is dereferenced unconditionally below; ri is optional and is
+	// nil-checked at its single use site.
+	if ji == nil {
 		return cmds
 	}
 

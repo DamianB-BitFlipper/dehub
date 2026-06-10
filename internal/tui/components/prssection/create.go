@@ -141,7 +141,7 @@ func (m *Model) ApplyCreatePRBranches(branches RepoBranches) bool {
 	action := m.GetPromptConfirmationAction()
 	repoName, ok := m.repoFromFilters()
 	if action == "edit_pr" {
-		if pr, ok := m.GetCurrRow().(*prrow.Data); ok && pr != nil && pr.Primary != nil {
+		if pr, isPr := m.GetCurrRow().(*prrow.Data); isPr && pr != nil && pr.Primary != nil {
 			repoName = pr.Primary.Repository.NameWithOwner
 			ok = true
 		}

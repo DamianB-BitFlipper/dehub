@@ -689,16 +689,23 @@ func (parser ConfigParser) mergeConfigs(globalCfgPath, userProvidedCfgPath strin
 			prsKeybinds := mergeKeybindings(overrides, dest, "prs")
 			issuesKeybinds := mergeKeybindings(overrides, dest, "issues")
 			actionsKeybinds := mergeKeybindings(overrides, dest, "actions")
+			notificationsKeybinds := mergeKeybindings(overrides, dest, "notifications")
 
 			maps.Merge(overrides, dest)
 			dest["keybindings"].(map[string]any)["universal"] = universalKeybinds
 			dest["keybindings"].(map[string]any)["prs"] = prsKeybinds
 			dest["keybindings"].(map[string]any)["issues"] = issuesKeybinds
 			dest["keybindings"].(map[string]any)["actions"] = actionsKeybinds
-			dest["prSections"] = overridesCopy["prSections"]
-			dest["issuesSections"] = overridesCopy["issuesSections"]
-			dest["notificationsSections"] = overridesCopy["notificationsSections"]
-			dest["actionsSections"] = overridesCopy["actionsSections"]
+			dest["keybindings"].(map[string]any)["notifications"] = notificationsKeybinds
+			// Only override sections the user-provided config actually defines;
+			// otherwise keep the (possibly customized) global sections.
+			for _, sections := range []string{
+				"prSections", "issuesSections", "notificationsSections", "actionsSections",
+			} {
+				if v, ok := overridesCopy[sections]; ok && v != nil {
+					dest[sections] = v
+				}
+			}
 
 			return nil
 		}),
@@ -734,13 +741,18 @@ func mergeKeybindings(src, dest map[string]any, typ string) []map[string]string 
 			continue
 		}
 
+		key, ok := keybind["key"].(string)
+		if !ok {
+			continue
+		}
+
 		casted := make(map[string]string, 0)
 		for key, val := range keybind {
 			if val, ok := val.(string); ok {
 				casted[key] = val
 			}
 		}
-		keybindsMap[keybind["key"].(string)] = casted
+		keybindsMap[key] = casted
 	}
 	for _, keybind := range dest["keybindings"].(map[string]any)[typ].([]any) {
 		keybind, ok := keybind.(map[string]any)

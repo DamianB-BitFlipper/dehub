@@ -61,7 +61,9 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if handled, cmd := m.HandleLocalSearchKey(msg, m.BuildRows); handled {
+		// Pass a closure (not the method value m.BuildRows) so rows are rebuilt
+		// from the live model after HandleLocalSearchKey updates LocalSearchValue.
+		if handled, cmd := m.HandleLocalSearchKey(msg, func() []table.Row { return m.BuildRows() }); handled {
 			return m, cmd
 		}
 
@@ -94,13 +96,16 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				input := m.PromptConfirmationBox.Value()
 				action := m.GetPromptConfirmationAction()
 				if input == "" || input == "Y" || input == "y" {
-					issue := m.GetCurrRow()
-					sid := tasks.SectionIdentifier{Id: m.Id, Type: SectionType}
-					switch action {
-					case "close":
-						cmd = tasks.CloseIssue(m.Ctx, sid, issue)
-					case "reopen":
-						cmd = tasks.ReopenIssue(m.Ctx, sid, issue)
+					// The row can be nil if a background refresh emptied or
+					// shrank the section while the prompt was open.
+					if issue := m.GetCurrRow(); issue != nil {
+						sid := tasks.SectionIdentifier{Id: m.Id, Type: SectionType}
+						switch action {
+						case "close":
+							cmd = tasks.CloseIssue(m.Ctx, sid, issue)
+						case "reopen":
+							cmd = tasks.ReopenIssue(m.Ctx, sid, issue)
+						}
 					}
 				}
 
@@ -396,12 +401,17 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 	startCmd := m.Ctx.StartTask(task)
 	cmds = append(cmds, startCmd)
 
+	// Snapshot mutable model state for the closure. The closure runs on a
+	// command goroutine while Update keeps mutating these fields.
+	limit := m.Ctx.Config.Defaults.IssuesLimit
+	if m.Config.Limit != nil {
+		limit = *m.Config.Limit
+	}
+	filters := m.GetFilters()
+	pageInfo := m.PageInfo
+
 	fetchCmd := func() tea.Msg {
-		limit := m.Config.Limit
-		if limit == nil {
-			limit = &m.Ctx.Config.Defaults.IssuesLimit
-		}
-		res, err := data.FetchIssues(m.GetFilters(), data.SearchSortUpdated, *limit, m.PageInfo)
+		res, err := data.FetchIssues(filters, data.SearchSortUpdated, limit, pageInfo)
 		if err != nil {
 			return constants.TaskFinishedMsg{
 				SectionId:   m.Id,

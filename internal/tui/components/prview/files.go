@@ -106,9 +106,13 @@ func (m *Model) renderFile(file data.ChangedFile) string {
 	)
 
 	path := file.Path
-	remaining := m.getIndentedContentWidth() - lipgloss.Width(prefix)
-	if len(path) > remaining {
-		path = lipgloss.JoinVertical(lipgloss.Left, path[0:remaining], " "+path[remaining:])
+	remaining := max(m.getIndentedContentWidth()-lipgloss.Width(prefix), 0)
+	if pathRunes := []rune(path); remaining > 0 && len(pathRunes) > remaining {
+		path = lipgloss.JoinVertical(
+			lipgloss.Left,
+			string(pathRunes[0:remaining]),
+			" "+string(pathRunes[remaining:]),
+		)
 	}
 
 	return lipgloss.JoinHorizontal(

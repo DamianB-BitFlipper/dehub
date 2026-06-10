@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/log/v2"
@@ -33,7 +34,10 @@ const (
 	ReasonSecurityAlert   = "security_alert"
 )
 
-var restClient *gh.RESTClient
+var (
+	restClientMu sync.Mutex
+	restClient   *gh.RESTClient
+)
 
 type NotificationSubject struct {
 	Title            string `json:"title"`
@@ -101,6 +105,8 @@ type NotificationsResponse struct {
 }
 
 func getRESTClient() (*gh.RESTClient, error) {
+	restClientMu.Lock()
+	defer restClientMu.Unlock()
 	if restClient != nil {
 		return restClient, nil
 	}

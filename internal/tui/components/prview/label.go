@@ -16,6 +16,7 @@ import (
 func (m *Model) label(labels []string) tea.Cmd {
 	pr := m.pr.Data.Primary
 	prNumber := pr.GetNumber()
+	repo := pr.GetRepoNameWithOwner()
 	taskId := fmt.Sprintf("pr_label_%d", prNumber)
 	task := context.Task{
 		Id:           taskId,
@@ -30,7 +31,7 @@ func (m *Model) label(labels []string) tea.Cmd {
 		"edit",
 		fmt.Sprint(prNumber),
 		"-R",
-		pr.GetRepoNameWithOwner(),
+		repo,
 	}
 	labelsMap := make(map[string]bool)
 	for _, label := range labels {
@@ -60,22 +61,23 @@ func (m *Model) label(labels []string) tea.Cmd {
 
 		err := c.Run()
 
-		returnedLabels := data.PRLabels{Nodes: []data.Label{}}
-		for _, label := range labels {
-			returnedLabels.Nodes = append(returnedLabels.Nodes, data.Label{
-				Name:  label,
-				Color: existingLabelsColorMap[label],
-			})
+		updateMsg := tasks.UpdatePRMsg{PrNumber: prNumber, Repo: repo}
+		if err == nil {
+			returnedLabels := data.PRLabels{Nodes: []data.Label{}}
+			for _, label := range labels {
+				returnedLabels.Nodes = append(returnedLabels.Nodes, data.Label{
+					Name:  label,
+					Color: existingLabelsColorMap[label],
+				})
+			}
+			updateMsg.Labels = &returnedLabels
 		}
 		return constants.TaskFinishedMsg{
 			SectionId:   m.sectionId,
 			SectionType: prssection.SectionType,
 			TaskId:      taskId,
 			Err:         err,
-			Msg: tasks.UpdatePRMsg{
-				PrNumber: prNumber,
-				Labels:   &returnedLabels,
-			},
+			Msg:         updateMsg,
 		}
 	})
 }

@@ -56,6 +56,7 @@ func NewModel(
 
 func (m *Model) SetNumItems(numItems int) {
 	m.NumCurrentItems = numItems
+	m.topBoundId = 0
 	m.bottomBoundId = utils.Min(m.NumCurrentItems-1, m.getNumPrsPerPage()-1)
 }
 
@@ -176,12 +177,17 @@ func (m *Model) PageUp() int {
 
 func (m *Model) FirstItem() int {
 	m.currId = 0
+	m.topBoundId = 0
+	m.bottomBoundId = utils.Min(m.NumCurrentItems-1, m.getNumPrsPerPage()-1)
 	m.viewport.GotoTop()
 	return m.currId
 }
 
 func (m *Model) LastItem() int {
 	m.currId = m.NumCurrentItems - 1
+	pageSize := max(1, m.getNumPrsPerPage())
+	m.bottomBoundId = utils.Max(m.NumCurrentItems-1, 0)
+	m.topBoundId = utils.Max(m.bottomBoundId-(pageSize-1), 0)
 	m.viewport.GotoBottom()
 	return m.currId
 }

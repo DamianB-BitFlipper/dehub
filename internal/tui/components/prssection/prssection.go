@@ -30,6 +30,7 @@ type Model struct {
 	Prs                     []prrow.Data
 	CreatePRForm            createPRForm
 	createPRBranchRequestID uint64
+	promptTargetPR          data.RowData
 }
 
 var fetchPullRequestsForSectionRefresh = data.FetchPullRequests
@@ -77,7 +78,9 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		if handled, cmd := m.HandleLocalSearchKey(msg, m.BuildRows); handled {
+		// Pass a closure (not the method value m.BuildRows) so rows are rebuilt
+		// from the live model after HandleLocalSearchKey updates LocalSearchValue.
+		if handled, cmd := m.HandleLocalSearchKey(msg, func() []table.Row { return m.BuildRows() }); handled {
 			return m, cmd
 		}
 
@@ -137,6 +140,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 
 			switch msg.String() {
 			case "ctrl+c", "esc":
+				m.promptTargetPR = nil
 				m.PromptConfirmationBox.Reset()
 				cmd = m.SetIsPromptConfirmationShown(false)
 				return m, cmd
@@ -144,9 +148,15 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			case "enter":
 				input := m.PromptConfirmationBox.Value()
 				action := m.GetPromptConfirmationAction()
-				pr := m.GetCurrRow()
+				// Use the row captured when the prompt was opened so a
+				// background refresh can't redirect the action to another PR.
+				pr := m.promptTargetPR
+				m.promptTargetPR = nil
+				if pr == nil {
+					pr = m.GetCurrRow()
+				}
 				sid := tasks.SectionIdentifier{Id: m.Id, Type: SectionType}
-				if input == "" || input == "Y" || input == "y" {
+				if pr != nil && (input == "" || input == "Y" || input == "y") {
 					switch action {
 					case "close":
 						cmd = tasks.ClosePR(m.Ctx, sid, pr)
@@ -313,9 +323,17 @@ func isCreatePREditAction(action string) bool {
 	return action == "create_pr" || action == "edit_pr"
 }
 
+// SetPromptConfirmationAction overrides the base implementation to also
+// capture the row the prompt is being opened for, so that confirming the
+// prompt acts on that PR even if rows are refreshed/re-sorted in the meantime.
+func (m *Model) SetPromptConfirmationAction(action string) {
+	m.BaseModel.SetPromptConfirmationAction(action)
+	m.promptTargetPR = m.GetCurrRow()
+}
+
 func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
 	for i, currPr := range m.Prs {
-		if currPr.Primary.Number != data.Number {
+		if !prIdentityMatches(currPr, data.Url, data.Repository.NameWithOwner, data.Number) {
 			continue
 		}
 
@@ -324,12 +342,30 @@ func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
 		m.Prs[i].Primary = &primary
 		m.Prs[i].IsEnriched = true
 		m.Prs[i].Enriched = data
+		break
 	}
+}
+
+// prIdentityMatches reports whether pr is the PR identified by url, or by
+// repo+number when no URL is available. Matching by number alone is a fallback
+// for callers that can't provide a repo (multi-repo sections can contain PRs
+// from different repos sharing the same number).
+func prIdentityMatches(pr prrow.Data, url string, repo string, number int) bool {
+	if pr.Primary == nil {
+		return false
+	}
+	if pr.Primary.Url != "" && url != "" {
+		return pr.Primary.Url == url
+	}
+	if pr.Primary.Number != number {
+		return false
+	}
+	return repo == "" || pr.Primary.Repository.NameWithOwner == repo
 }
 
 func (m *Model) applyUpdatePRMsg(msg tasks.UpdatePRMsg) bool {
 	for i, currPr := range m.Prs {
-		if currPr.Primary == nil || currPr.Primary.Number != msg.PrNumber {
+		if !prIdentityMatches(currPr, "", msg.Repo, msg.PrNumber) {
 			continue
 		}
 
@@ -843,17 +879,23 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 	startCmd := m.Ctx.StartTask(task)
 	cmds = append(cmds, startCmd)
 
-	fetchCmd := func() tea.Msg {
-		limit := m.Config.Limit
-		if limit == nil {
-			limit = &m.Ctx.Config.Defaults.PrsLimit
-		}
+	// Snapshot mutable model state before building the closure so the command
+	// goroutine doesn't read fields the Update loop concurrently writes.
+	filters := m.GetFilters()
+	limit := m.Config.Limit
+	if limit == nil {
+		limit = &m.Ctx.Config.Defaults.PrsLimit
+	}
+	pageInfo := m.PageInfo
+	sectionId := m.Id
+	sectionType := m.Type
 
-		res, err := data.FetchPullRequests(m.GetFilters(), data.SearchSortUpdated, *limit, m.PageInfo)
+	fetchCmd := func() tea.Msg {
+		res, err := data.FetchPullRequests(filters, data.SearchSortUpdated, *limit, pageInfo)
 		if err != nil {
 			return constants.TaskFinishedMsg{
-				SectionId:   m.Id,
-				SectionType: m.Type,
+				SectionId:   sectionId,
+				SectionType: sectionType,
 				TaskId:      taskId,
 				Err:         err,
 			}
@@ -864,8 +906,8 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 			prs = append(prs, prrow.Data{Primary: &pr})
 		}
 		return constants.TaskFinishedMsg{
-			SectionId:   m.Id,
-			SectionType: m.Type,
+			SectionId:   sectionId,
+			SectionType: sectionType,
 			TaskId:      taskId,
 			Msg: SectionPullRequestsFetchedMsg{
 				Prs:        prs,

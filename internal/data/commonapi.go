@@ -2,7 +2,6 @@ package data
 
 import (
 	"charm.land/log/v2"
-	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
 )
 
@@ -16,10 +15,7 @@ type VersionResponse struct {
 
 func FetchLatestVersion() (VersionResponse, error) {
 	var queryResult VersionResponse
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-	}
+	client, err := getGraphQLClient()
 	if err != nil {
 		return VersionResponse{}, err
 	}

@@ -360,9 +360,12 @@ func (c *Controller) ShowCompletions() {
 	case *fuzzyselect.UserMentionSource:
 		if !src.WithAtSymbol {
 			c.fzfSelect.Show()
-		} else if x := ctx.Start.X - 1; x >= 0 && len(lines) > ctx.Start.Y && len(lines[ctx.Start.Y]) > x &&
-			lines[ctx.Start.Y][x] == '@' {
-			c.fzfSelect.Show()
+		} else if x := ctx.Start.X - 1; x >= 0 && len(lines) > ctx.Start.Y && ctx.Start.Y >= 0 {
+			// ctx.Start.X is a rune index, so index the line by runes
+			// (a byte index breaks on lines with multi-byte characters).
+			if runes := []rune(lines[ctx.Start.Y]); len(runes) > x && runes[x] == '@' {
+				c.fzfSelect.Show()
+			}
 		}
 	default:
 		c.fzfSelect.Show()

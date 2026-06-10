@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"charm.land/log/v2"
-	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
 	"github.com/shurcooL/githubv4"
 
@@ -105,11 +104,7 @@ func FetchIssues(
 	limit int,
 	pageInfo *PageInfo,
 ) (IssuesResponse, error) {
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-	}
-
+	client, err := getGraphQLClient()
 	if err != nil {
 		return IssuesResponse{}, err
 	}
@@ -159,12 +154,9 @@ type IssuesResponse struct {
 
 // FetchIssue fetches a single issue by its GitHub URL
 func FetchIssue(issueUrl string) (IssueData, error) {
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-		if err != nil {
-			return IssueData{}, err
-		}
+	client, err := getGraphQLClient()
+	if err != nil {
+		return IssueData{}, err
 	}
 
 	var queryResult struct {

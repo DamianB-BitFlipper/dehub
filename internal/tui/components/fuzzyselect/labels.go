@@ -65,8 +65,17 @@ func (*LabelSource) InsertSuggestion(
 	remainingInput = strings.TrimLeft(remainingInput, " \t")
 
 	newLine := string(runes[:labelInfo.StartIdx.X]) + replacement + remainingInput
-	newValue := joinLines(lines[:contextStart.Y]) + newLine + joinLines(lines[contextEnd.Y+1:])
+	before := ""
+	if contextStart.Y > 0 {
+		before = joinLines(lines[:contextStart.Y]) + string('\n')
+	}
+	after := ""
+	if contextEnd.Y+1 < len(lines) {
+		after = string('\n') + joinLines(lines[contextEnd.Y+1:])
+	}
+	newValue := before + newLine + after
 	newCursorPos.X = labelInfo.StartIdx.X + len([]rune(replacement))
+	newCursorPos.Y = contextStart.Y
 
 	return newValue, newCursorPos
 }
@@ -108,7 +117,7 @@ func ExtractLabelAtCursor(input string, cursorPos tea.Position) LabelInfo {
 	}
 
 	lines := strings.Split(input, "\n")
-	if cursorPos.Y > len(lines) {
+	if cursorPos.Y < 0 || cursorPos.Y >= len(lines) {
 		return LabelInfo{
 			Label:    "",
 			StartIdx: tea.Position{},

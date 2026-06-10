@@ -7,7 +7,7 @@ import (
 func CurrentLoginName() (string, error) {
 	client, err := gh.DefaultGraphQLClient()
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 
 	var query struct {

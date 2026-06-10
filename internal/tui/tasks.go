@@ -24,16 +24,22 @@ func (m *Model) openBrowser() tea.Cmd {
 		Error:        nil,
 	}
 	startCmd := m.ctx.StartTask(task)
+	// Resolve the current row now, on the Update goroutine; the command
+	// closure runs on a background goroutine where reading the model would
+	// race with Update and could open whatever row is selected by then.
+	var url string
+	if currRow := m.getCurrRowData(); currRow != nil && !reflect.ValueOf(currRow).IsNil() {
+		url = currRow.GetUrl()
+	}
 	openCmd := func() tea.Msg {
-		b := browser.New("", os.Stdout, os.Stdin)
-		currRow := m.getCurrRowData()
-		if currRow == nil || reflect.ValueOf(currRow).IsNil() {
+		if url == "" {
 			return constants.TaskFinishedMsg{
 				TaskId: taskId,
 				Err:    errors.New("current selection doesn't have a URL"),
 			}
 		}
-		err := b.Browse(currRow.GetUrl())
+		b := browser.New("", os.Stdout, os.Stdin)
+		err := b.Browse(url)
 		return constants.TaskFinishedMsg{TaskId: taskId, Err: err}
 	}
 	return tea.Batch(startCmd, openCmd)

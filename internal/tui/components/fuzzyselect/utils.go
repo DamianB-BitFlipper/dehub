@@ -34,7 +34,7 @@ func ExtractWordAtCursor(input string, cursorPos tea.Position) WordInfo {
 	}
 
 	lines := strings.Split(input, "\n")
-	if cursorPos.Y > len(lines) {
+	if cursorPos.Y < 0 || cursorPos.Y >= len(lines) {
 		return WordInfo{
 			Word:     "",
 			StartIdx: tea.Position{X: 0},

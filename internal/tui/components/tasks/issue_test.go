@@ -21,6 +21,8 @@ type mockIssue struct {
 	url       string
 	updatedAt time.Time
 	isDraft   bool
+	headRef   string
+	baseRef   string
 }
 
 func (m mockIssue) GetNumber() int               { return m.number }
@@ -29,6 +31,8 @@ func (m mockIssue) GetTitle() string             { return m.title }
 func (m mockIssue) GetUrl() string               { return m.url }
 func (m mockIssue) GetUpdatedAt() time.Time      { return m.updatedAt }
 func (m mockIssue) GetIsDraft() bool             { return m.isDraft }
+func (m mockIssue) GetHeadRefName() string       { return m.headRef }
+func (m mockIssue) GetBaseRefName() string       { return m.baseRef }
 
 // noopStartTask is a stub that returns nil for testing
 func noopStartTask(task context.Task) tea.Cmd {

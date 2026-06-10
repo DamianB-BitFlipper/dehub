@@ -292,7 +292,28 @@ yes
 
 yes
 @octo `, newInput)
-	require.Equal(t, tea.Position{Y: 0, X: 6}, newCursor)
+	require.Equal(t, tea.Position{Y: 3, X: 6}, newCursor)
+
+	// Accepting a mention on a line that isn't the last must not merge the
+	// following lines into the current one.
+	newInput, newCursor = source.InsertSuggestion(
+		"hello @oc\nworld",
+		"octo",
+		tea.Position{Y: 0, X: 7},
+		tea.Position{Y: 0, X: 9},
+	)
+	require.Equal(t, "hello @octo \nworld", newInput)
+	require.Equal(t, tea.Position{Y: 0, X: 12}, newCursor)
+
+	// A leading empty line must be preserved.
+	newInput, newCursor = source.InsertSuggestion(
+		"\n@oc",
+		"octo",
+		tea.Position{Y: 1, X: 1},
+		tea.Position{Y: 1, X: 3},
+	)
+	require.Equal(t, "\n@octo ", newInput)
+	require.Equal(t, tea.Position{Y: 1, X: 6}, newCursor)
 }
 
 func TestFilterMatchesSuggestionDetail(t *testing.T) {

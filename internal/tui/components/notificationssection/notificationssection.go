@@ -2,6 +2,7 @@ package notificationssection
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -215,7 +216,9 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if handled, cmd := m.HandleLocalSearchKey(msg, m.BuildRows); handled {
+		// Pass a closure (not the method value m.BuildRows) so rows are rebuilt
+		// from the live model after HandleLocalSearchKey updates LocalSearchValue.
+		if handled, cmd := m.HandleLocalSearchKey(msg, func() []table.Row { return m.BuildRows() }); handled {
 			return m, cmd
 		}
 
@@ -649,10 +652,12 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 	startCmd := m.Ctx.StartTask(task)
 	cmds = append(cmds, startCmd)
 
-	// Capture session state for the closure
-	sessionMarkedRead := m.sessionMarkedRead
+	// Snapshot session state for the closure. The closure runs on a command
+	// goroutine while Update keeps writing to the live maps, so copy them now
+	// to avoid a concurrent map read/write.
+	sessionMarkedRead := maps.Clone(m.sessionMarkedRead)
 	hasSessionMarkedRead := len(sessionMarkedRead) > 0
-	sessionMarkedDone := m.sessionMarkedDone
+	sessionMarkedDone := maps.Clone(m.sessionMarkedDone)
 
 	// Capture current page info for pagination
 	pageInfo := m.PageInfo

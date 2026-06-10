@@ -108,8 +108,17 @@ func (*SearchQuerySource) InsertSuggestion(
 	runes := []rune(lines[contextStart.Y])
 	replacement := suggestion + " "
 	newLine := string(runes[:contextStart.X]) + replacement + string(runes[contextEnd.X:])
-	newValue := joinLines(lines[:contextStart.Y]) + newLine + joinLines(lines[contextEnd.Y+1:])
+	before := ""
+	if contextStart.Y > 0 {
+		before = joinLines(lines[:contextStart.Y]) + string('\n')
+	}
+	after := ""
+	if contextEnd.Y+1 < len(lines) {
+		after = string('\n') + joinLines(lines[contextEnd.Y+1:])
+	}
+	newValue := before + newLine + after
 	newCursorPos.X = contextStart.X + len([]rune(replacement))
+	newCursorPos.Y = contextStart.Y
 	return newValue, newCursorPos
 }
 

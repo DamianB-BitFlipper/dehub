@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/dlvhdr/gh-dehub/v4/internal/data"
+	"github.com/dlvhdr/gh-dehub/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dehub/v4/internal/tui/components/tasks"
 )
 
@@ -17,6 +18,7 @@ type mergePRPopup struct {
 	methodIndex  int
 	auto         bool
 	deleteBranch bool
+	retargetPRs  []tasks.BranchRetarget
 }
 
 var mergePRMethods = []struct {
@@ -28,15 +30,22 @@ var mergePRMethods = []struct {
 	{label: "Rebase and merge", method: tasks.MergeMethodRebase},
 }
 
-func newMergePRPopup(section tasks.SectionIdentifier, pr data.RowData) *mergePRPopup {
-	return &mergePRPopup{section: section, pr: pr, methodIndex: 1, deleteBranch: true}
+func newMergePRPopup(section tasks.SectionIdentifier, pr data.RowData, retargetPRs []tasks.BranchRetarget) *mergePRPopup {
+	return &mergePRPopup{section: section, pr: pr, methodIndex: 1, deleteBranch: true, retargetPRs: retargetPRs}
 }
 
 func (p *mergePRPopup) options() tasks.MergePROptions {
+	branchRef := ""
+	if pr, ok := p.pr.(branchRefData); ok {
+		branchRef = pr.GetHeadRefName()
+	}
+
 	return tasks.MergePROptions{
 		Method:       mergePRMethods[p.methodIndex].method,
 		Auto:         p.auto,
 		DeleteBranch: p.deleteBranch,
+		RetargetPRs:  p.retargetPRs,
+		BranchRef:    branchRef,
 	}
 }
 
@@ -44,11 +53,63 @@ func (p *mergePRPopup) move(delta int) {
 	p.methodIndex = (p.methodIndex + delta + len(mergePRMethods)) % len(mergePRMethods)
 }
 
-func (m *Model) openMergePRPopup(section tasks.SectionIdentifier, pr data.RowData) {
+func (m *Model) openMergePRPopup(section tasks.SectionIdentifier, pr data.RowData, retargetPRs ...tasks.BranchRetarget) {
 	if pr == nil {
 		return
 	}
-	m.mergePRPopup = newMergePRPopup(section, pr)
+	m.mergePRPopup = newMergePRPopup(section, pr, retargetPRs)
+}
+
+type branchRefData interface {
+	data.RowData
+	GetHeadRefName() string
+	GetBaseRefName() string
+}
+
+func mergePRRetargets(pr data.RowData, prs []prrow.Data) []tasks.BranchRetarget {
+	selected, ok := pr.(branchRefData)
+	if !ok {
+		return nil
+	}
+	selectedPR, ok := pr.(*prrow.Data)
+	if !ok || selectedPR.Primary == nil || !isSameRepoHead(selectedPR.Primary) {
+		return nil
+	}
+
+	headRefName := selected.GetHeadRefName()
+	baseRefName := selected.GetBaseRefName()
+	repoName := selected.GetRepoNameWithOwner()
+	if headRefName == "" || baseRefName == "" || repoName == "" {
+		return nil
+	}
+
+	retargets := make([]tasks.BranchRetarget, 0)
+	seen := map[int]struct{}{}
+	for _, candidate := range prs {
+		if candidate.Primary == nil {
+			continue
+		}
+		if candidate.Primary.Number == selected.GetNumber() || candidate.Primary.Repository.NameWithOwner != repoName {
+			continue
+		}
+		if candidate.Primary.BaseRefName != headRefName || candidate.Primary.BaseRefName == baseRefName {
+			continue
+		}
+		if _, ok := seen[candidate.Primary.Number]; ok {
+			continue
+		}
+		seen[candidate.Primary.Number] = struct{}{}
+		retargets = append(retargets, tasks.BranchRetarget{
+			Number:      candidate.Primary.Number,
+			RepoName:    repoName,
+			BaseRefName: baseRefName,
+		})
+	}
+	return retargets
+}
+
+func isSameRepoHead(pr *data.PullRequestData) bool {
+	return pr.HeadRepository.Name == pr.Repository.Name && pr.HeadRepository.Owner.Login == pr.Repository.Owner.Login
 }
 
 func (m *Model) updateMergePRPopup(msg tea.KeyMsg) tea.Cmd {

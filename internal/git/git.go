@@ -100,13 +100,13 @@ func GetRepo(dir string) (*Repo, error) {
 		if err != nil {
 			commitsBehind = 0
 		}
-		remotes, _ := repo.RemoteGetURL(b)
 		branches[i] = Branch{
 			Name:          b,
 			LastUpdatedAt: updatedAt,
 			CreatedAt:     updatedAt,
 			IsCheckedOut:  isHead,
-			Remotes:       remotes,
+			// Remotes is intentionally left empty: RemoteGetURL expects a
+			// remote name, not a branch name, and no consumer reads this yet.
 			LastCommitMsg: lastCommitMsg,
 			CommitsAhead:  int(commitsAhead),
 			CommitsBehind: int(commitsBehind),

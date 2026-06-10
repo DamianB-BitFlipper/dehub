@@ -925,11 +925,12 @@ func (m *Model) EnrichCurrRow() tea.Cmd {
 		return nil
 	}
 	url := m.pr.Data.Primary.Url
+	sid := m.sectionIdentifier()
 	return func() tea.Msg {
 		d, err := data.FetchPullRequest(url)
 		return EnrichedPrMsg{
-			Id:   m.sectionId,
-			Type: prssection.SectionType,
+			Id:   sid.Id,
+			Type: sid.Type,
 			Data: d,
 			Err:  err,
 		}

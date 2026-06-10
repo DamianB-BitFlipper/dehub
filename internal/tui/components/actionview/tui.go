@@ -477,7 +477,11 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.err = rmMsg.err
 			if m.embedded {
 				// Surface the error via EmbeddedView() instead of quitting
-				// the host TUI.
+				// the host TUI. Re-arm the interval tick so a transient
+				// error self-recovers instead of stopping polling forever.
+				if _, ok := msg.(runModeIntervalTickMsg); ok {
+					return m, m.startFetchingRunWithInterval()
+				}
 				return m, nil
 			}
 			msgCmd := tea.Printf("%s\nrepo=%s, runID=%s\nOriginal error: %v\n",
@@ -487,6 +491,7 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tea.Sequence(msgCmd, tea.Quit)
 		}
 
+		m.err = nil
 		m.workflowRuns = rmMsg.runs
 		m.lastFetched = time.Now()
 		m.stopSpinners()
@@ -514,6 +519,9 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if wrMsg.err == nil {
 			m.checksFetched = true
+			// A successful fetch clears any previously-surfaced transient
+			// error so EmbeddedView() goes back to rendering the checks.
+			m.err = nil
 		}
 
 		if len(wrMsg.pr.Commits.Nodes) > 0 {
@@ -521,7 +529,12 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				len(wrMsg.pr.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes))
 		}
 
-		m.prWithChecks = wrMsg.pr
+		if wrMsg.err == nil {
+			// On error wrMsg.pr is the zero value; keep the previous data so
+			// the view (and the interval tick's in-progress check) still
+			// reflect the last good fetch.
+			m.prWithChecks = wrMsg.pr
+		}
 		if _, ok := msg.(prChecksIntervalTickMsg); ok {
 			cmds = append(cmds, m.fetchPRChecksWithInterval())
 		}
@@ -552,8 +565,10 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.err = wrMsg.err
 			if m.embedded {
 				// Surface the error via EmbeddedView() instead of quitting
-				// the host TUI.
-				return m, nil
+				// the host TUI. Keep any already-queued commands (notably
+				// the interval re-arm above) so polling self-recovers from
+				// transient errors instead of stopping forever.
+				return m, tea.Batch(cmds...)
 			}
 			msgCmd := tea.Printf("%s\nrepo=%s, number=%s\nOriginal error: %v\n",
 				lipgloss.NewStyle().Foreground(m.styles.colors.errorColor).Bold(true).Render(
@@ -602,8 +617,8 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if ji.job.Id == msg.jobId {
 				ji.renderedText = msg.renderedText
 				ji.loadingLogs = false
-				currJob := m.jobsList.SelectedItem()
-				if currJob != nil && currJob.(*jobItem).job.Id == msg.jobId {
+				currJob := m.getSelectedJobItem()
+				if currJob != nil && currJob.job.Id == msg.jobId {
 					cmds = append(cmds, m.renderJobLogs())
 				}
 
@@ -668,9 +683,13 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				ji := m.getSelectedJobItem()
 				if ji != nil {
 					m.logsViewport.SetContentLines(ji.unstyledLogs)
-					highlights := regexp.MustCompile(
-						m.logsInput.Value(),
-					).FindAllStringIndex(
+					re, err := regexp.Compile(m.logsInput.Value())
+					if err != nil {
+						// Invalid regex (e.g. "(", "c++"): fall back to a
+						// literal match instead of crashing.
+						re = regexp.MustCompile(regexp.QuoteMeta(m.logsInput.Value()))
+					}
+					highlights := re.FindAllStringIndex(
 						strings.Join(ji.unstyledLogs, "\n"), -1,
 					)
 					m.numHighlights = len(highlights)
@@ -696,6 +715,12 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				} else {
 					m.focusedPane = PaneRuns
 				}
+				// The other mode has a different set of panes, so a zoom on
+				// the old mode's pane would render nothing. Un-zoom.
+				if m.zoomedPane != nil {
+					m.zoomedPane = nil
+					m.setWidths()
+				}
 				cmds = append(cmds, m.onWorkflowRunsFetched()...)
 				if m.flat {
 					cmds = append(cmds, m.onCheckChanged()...)
@@ -707,7 +732,11 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		if key.Matches(msg, zoomPaneKey) {
 			if m.zoomedPane == nil {
-				m.zoomedPane = &m.focusedPane
+				// Store a detached copy: pointing at m.focusedPane would
+				// alias a field of this (soon stale) model copy and track
+				// later focus changes instead of the pane zoomed on.
+				zoomed := m.focusedPane
+				m.zoomedPane = &zoomed
 				m.setWidths()
 			} else {
 				m.zoomedPane = nil
@@ -740,7 +769,7 @@ func (m model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				cmds = append(cmds, m.rerunRun(ri.run.Id)...)
 			} else {
 				ji := m.getSelectedJobItem()
-				if ri == nil && ji == nil {
+				if ji == nil {
 					break
 				}
 				rid := ""
@@ -2079,8 +2108,7 @@ func (m *model) onWorkflowRunsFetched() []tea.Cmd {
 
 		cmds = append(cmds, m.buildHierachicalChecksLists()...)
 
-		if len(m.runsList.Items()) > 0 {
-			ri := m.runsList.SelectedItem().(*runItem)
+		if ri := m.getSelectedRunItem(); ri != nil {
 			cmds = append(cmds, m.makeFetchWorkflowRunStepsCmd(ri.run.Id))
 			if before == nil || before.run.Id != ri.run.Id {
 				cmds = append(cmds, m.onRunChanged()...)

@@ -137,7 +137,9 @@ func (m *Model) viewChecksStatus() (string, checkSectionStatus) {
 
 func (m *Model) viewMergeStatus() (string, checkSectionStatus) {
 	var icon, title, subtitle string
-	var status checkSectionStatus
+	// Default to waiting so states that match no branch below (e.g. BEHIND
+	// without conflicts) don't report the zero value, statusSuccess.
+	status := statusWaiting
 	numReviewOwners := m.numRequestedReviewOwners()
 	if m.pr.Data.Primary.MergeStateStatus == "CLEAN" ||
 		m.pr.Data.Primary.MergeStateStatus == "UNSTABLE" {
@@ -203,7 +205,10 @@ func (m *Model) viewReviewStatus() (string, checkSectionStatus) {
 	}
 
 	var icon, title, subtitle string
-	var status checkSectionStatus
+	// Default to waiting so states that match no branch below (e.g.
+	// REVIEW_REQUIRED with no matching sub-case) don't report the zero value,
+	// statusSuccess.
+	status := statusWaiting
 	numReviewOwners := m.numRequestedReviewOwners()
 
 	numApproving, numChangesRequested, numPending, numCommented := 0, 0, 0, 0

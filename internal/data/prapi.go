@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"charm.land/log/v2"
@@ -45,7 +46,8 @@ type EnrichedPullRequestData struct {
 	HeadRefName       string
 	BaseRefName       string
 	HeadRepository    struct {
-		Name string
+		Name  string
+		Owner Owner
 	}
 	HeadRef struct {
 		Name string
@@ -82,7 +84,8 @@ type PullRequestData struct {
 	HeadRefName       string
 	BaseRefName       string
 	HeadRepository    struct {
-		Name string
+		Name  string
+		Owner Owner
 	}
 	HeadRef struct {
 		Name string
@@ -496,11 +499,14 @@ type PullRequestsResponse struct {
 }
 
 var (
+	clientMu     sync.Mutex
 	client       *gh.GraphQLClient
 	cachedClient *gh.GraphQLClient
 )
 
 func SetClient(c *gh.GraphQLClient) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	client = c
 	cachedClient = c
 }
@@ -508,13 +514,40 @@ func SetClient(c *gh.GraphQLClient) {
 // ClearEnrichmentCache clears the cached GraphQL client used for fetching
 // enriched PR/Issue data. Call this when refreshing to ensure fresh data.
 func ClearEnrichmentCache() {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	cachedClient = nil
 }
 
 // IsEnrichmentCacheCleared returns true if the enrichment cache is cleared.
 // This is primarily for testing purposes.
 func IsEnrichmentCacheCleared() bool {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	return cachedClient == nil
+}
+
+// getGraphQLClient returns the package-wide GraphQL client, lazily
+// initializing it. Safe to call from concurrent fetch goroutines.
+func getGraphQLClient() (*gh.GraphQLClient, error) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	if client != nil {
+		return client, nil
+	}
+	var err error
+	if config.IsFeatureEnabled(config.FF_MOCK_DATA) {
+		log.Info("using mock data", "server", "https://localhost:3000")
+		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		client, err = gh.NewGraphQLClient(
+			gh.ClientOptions{Host: "localhost:3000", AuthToken: "fake-token"},
+		)
+	} else {
+		client, err = gh.DefaultGraphQLClient()
+	}
+	return client, err
 }
 
 func FetchPullRequests(
@@ -523,21 +556,7 @@ func FetchPullRequests(
 	limit int,
 	pageInfo *PageInfo,
 ) (PullRequestsResponse, error) {
-	var err error
-	if client == nil {
-		if config.IsFeatureEnabled(config.FF_MOCK_DATA) {
-			log.Info("using mock data", "server", "https://localhost:3000")
-			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
-				InsecureSkipVerify: true,
-			}
-			client, err = gh.NewGraphQLClient(
-				gh.ClientOptions{Host: "localhost:3000", AuthToken: "fake-token"},
-			)
-		} else {
-			client, err = gh.DefaultGraphQLClient()
-		}
-	}
-
+	client, err := getGraphQLClient()
 	if err != nil {
 		return PullRequestsResponse{}, err
 	}
@@ -580,12 +599,9 @@ func FetchPullRequests(
 }
 
 func FetchPullRequestByNumber(owner, repo string, number int) (PullRequestData, error) {
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-		if err != nil {
-			return PullRequestData{}, err
-		}
+	client, err := getGraphQLClient()
+	if err != nil {
+		return PullRequestData{}, err
 	}
 
 	var queryResult struct {
@@ -609,12 +625,9 @@ func FetchPullRequestByNumber(owner, repo string, number int) (PullRequestData, 
 }
 
 func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-		if err != nil {
-			return EnrichedPullRequestData{}, err
-		}
+	client, err := getGraphQLClient()
+	if err != nil {
+		return EnrichedPullRequestData{}, err
 	}
 
 	var queryResult struct {

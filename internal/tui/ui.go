@@ -249,14 +249,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.actionRunView = &view
 		return m, actionCmd
 	}
-	if m.openPRURLPopup != nil {
-		return m, m.updateOpenPRURLPopup(msg)
-	}
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		log.Info("Key pressed", "key", msg.String())
 		m.ctx.Error = nil
+		if m.ctx.Config == nil {
+			// Config hasn't loaded yet (initMsg not processed). Most key
+			// handlers dereference m.ctx.Config, so allow quitting cleanly
+			// and ignore everything else until startup completes.
+			if key.Matches(msg, m.keys.Quit) {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if m.messagePopup != nil {
 			if msg.String() == "esc" || msg.String() == "enter" {
 				m.messagePopup = nil
@@ -265,6 +270,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mergePRPopup != nil {
 			return m, m.updateMergePRPopup(msg)
+		}
+		if m.openPRURLPopup != nil {
+			return m, m.updateOpenPRURLPopup(msg)
 		}
 		if m.ctx.View == config.ActionsView && currSection != nil {
 			if as, ok := currSection.(*actionssection.Model); ok && as != nil {
@@ -736,7 +744,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, keys.PRKeys.Merge):
 				if currRowData != nil && currSection != nil {
 					sid := tasks.SectionIdentifier{Id: currSection.GetId(), Type: currSection.GetType()}
-					m.openMergePRPopup(sid, currRowData)
+					if prSection, ok := currSection.(*prssection.Model); ok && prSection != nil {
+						m.openMergePRPopup(sid, currRowData, mergePRRetargets(currRowData, prSection.Prs)...)
+					} else {
+						m.openMergePRPopup(sid, currRowData)
+					}
 				}
 				return m, nil
 
@@ -1099,21 +1111,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, issueCmd)
 
 			case key.Matches(msg, keys.NotificationKeys.MarkAsDone):
-				cmds = append(
-					cmds,
-					m.updateSection(currSection.GetId(), currSection.GetType(), msg),
-				)
+				if currSection != nil {
+					cmds = append(
+						cmds,
+						m.updateSection(currSection.GetId(), currSection.GetType(), msg),
+					)
+				}
 
 			case key.Matches(msg, keys.NotificationKeys.MarkAllAsDone):
 				cmd = m.promptConfirmation(currSection, "done_all")
 				return m, cmd
 
 			case key.Matches(msg, keys.NotificationKeys.Open):
-				cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
+				if currSection != nil {
+					cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
+				}
 				return m, cmd
 
 			case key.Matches(msg, keys.NotificationKeys.SortByRepo):
-				cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
+				if currSection != nil {
+					cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
+				}
 				return m, cmd
 
 			case key.Matches(msg, keys.NotificationKeys.SwitchToPRs),
@@ -1259,8 +1277,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prview.EnrichedPrMsg:
 		if msg.Err == nil {
 			m.prView.SetEnrichedPR(msg.Data)
-			if msg.Id >= 0 && msg.Id < len(m.prs) {
-				m.prs[msg.Id].(*prssection.Model).EnrichPR(msg.Data)
+			// Only PR sections cache enriched PR data; enrichment kicked
+			// off for a notification-subject PR (msg.Type is the
+			// notifications section type) must not be applied to an
+			// unrelated PR section that happens to share the index.
+			if msg.Type == prssection.SectionType && msg.Id >= 0 && msg.Id < len(m.prs) {
+				if prSection, ok := m.prs[msg.Id].(*prssection.Model); ok && prSection != nil {
+					prSection.EnrichPR(msg.Data)
+				}
 			}
 			syncCmd := m.syncSidebar()
 			cmds = append(cmds, syncCmd)
@@ -1577,6 +1601,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.copySelection.update(x, y)
 		}
 		return m, cmd
+
+	case tea.PasteMsg:
+		// Bracketed paste while the Open-PR-URL popup is open belongs to
+		// the popup's input. All other non-key messages (interval ticks,
+		// fetch results, spinner ticks, resizes) intentionally flow
+		// through normal processing even when the popup is open.
+		if m.openPRURLPopup != nil {
+			return m, m.updateOpenPRURLPopup(msg)
+		}
 
 	case tea.WindowSizeMsg:
 		m.onWindowSizeChanged(msg)

@@ -39,3 +39,11 @@ func (data Data) GetUpdatedAt() time.Time {
 func (data Data) GetCreatedAt() time.Time {
 	return data.Primary.CreatedAt
 }
+
+func (data Data) GetHeadRefName() string {
+	return data.Primary.HeadRefName
+}
+
+func (data Data) GetBaseRefName() string {
+	return data.Primary.BaseRefName
+}

@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"charm.land/log/v2"
-	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
 )
 
@@ -55,12 +54,9 @@ func FetchRepoUsers(owner, repoName string) ([]User, error) {
 	log.Debug("Fetching repo users", "owner", owner, "repoName", repoName)
 
 	// Initialize client if needed
-	if client == nil {
-		var err error
-		client, err = gh.DefaultGraphQLClient()
-		if err != nil {
-			return nil, err
-		}
+	client, err := getGraphQLClient()
+	if err != nil {
+		return nil, err
 	}
 
 	// Query only publicly available mentionable users
@@ -72,7 +68,7 @@ func FetchRepoUsers(owner, repoName string) ([]User, error) {
 		"limit": graphql.Int(100),
 	}
 
-	err := client.Query("GetMentionableUsers", &result, variables)
+	err = client.Query("GetMentionableUsers", &result, variables)
 	if err != nil {
 		return nil, err
 	}

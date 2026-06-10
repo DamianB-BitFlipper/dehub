@@ -190,12 +190,16 @@ func (m *Model) CenterCurrItem() {
 }
 
 func (m *Model) cacheColumnWidths() {
+	// renderHeaderColumns only includes shown columns, so keep a separate
+	// counter for it while indexing the full m.Columns list.
 	columns := m.renderHeaderColumns()
-	for i, col := range columns {
+	headerColId := 0
+	for i := range m.Columns {
 		if m.Columns[i].Hidden != nil && *m.Columns[i].Hidden {
 			continue
 		}
-		m.Columns[i].ComputedWidth = lipgloss.Width(col)
+		m.Columns[i].ComputedWidth = lipgloss.Width(columns[headerColId])
+		headerColId++
 	}
 }
 

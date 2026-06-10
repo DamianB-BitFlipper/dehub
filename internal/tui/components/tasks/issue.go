@@ -40,6 +40,10 @@ func CloseIssue(
 		StartText:    fmt.Sprintf("Closing issue #%d", issueNumber),
 		FinishedText: fmt.Sprintf("Issue #%d has been closed", issueNumber),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdateIssueMsg{IssueNumber: issueNumber}
+			}
+
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				IsClosed:    utils.BoolPtr(true),
@@ -67,6 +71,10 @@ func ReopenIssue(
 		StartText:    fmt.Sprintf("Reopening issue #%d", issueNumber),
 		FinishedText: fmt.Sprintf("Issue #%d has been reopened", issueNumber),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdateIssueMsg{IssueNumber: issueNumber}
+			}
+
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				IsClosed:    utils.BoolPtr(false),
@@ -99,6 +107,10 @@ func AssignIssue(
 		StartText:    fmt.Sprintf("Assigning issue #%d to %s", issueNumber, usernames),
 		FinishedText: fmt.Sprintf("Issue #%d has been assigned to %s", issueNumber, usernames),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdateIssueMsg{IssueNumber: issueNumber}
+			}
+
 			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
 			for _, assignee := range usernames {
 				returnedAssignees.Nodes = append(
@@ -138,6 +150,10 @@ func UnassignIssue(
 		StartText:    fmt.Sprintf("Unassigning %s from issue #%d", usernames, issueNumber),
 		FinishedText: fmt.Sprintf("%s unassigned from issue #%d", usernames, issueNumber),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdateIssueMsg{IssueNumber: issueNumber}
+			}
+
 			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
 			for _, assignee := range usernames {
 				returnedAssignees.Nodes = append(
@@ -175,6 +191,10 @@ func CommentOnIssue(
 		StartText:    fmt.Sprintf("Commenting on issue #%d", issueNumber),
 		FinishedText: fmt.Sprintf("Commented on issue #%d", issueNumber),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdateIssueMsg{IssueNumber: issueNumber}
+			}
+
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				NewComment: &data.IssueComment{
@@ -230,6 +250,10 @@ func LabelIssue(
 		StartText:    fmt.Sprintf("Labeling issue #%d to %s", issueNumber, labels),
 		FinishedText: fmt.Sprintf("Issue #%d has been labeled with %s", issueNumber, labels),
 		Msg: func(c *exec.Cmd, err error) tea.Msg {
+			if err != nil {
+				return UpdateIssueMsg{IssueNumber: issueNumber}
+			}
+
 			returnedLabels := data.IssueLabels{Nodes: []data.Label{}}
 			for _, label := range labels {
 				returnedLabels.Nodes = append(returnedLabels.Nodes, data.Label{

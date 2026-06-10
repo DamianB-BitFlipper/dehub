@@ -20,7 +20,7 @@ func (src *UserMentionSource) ExtractContext(input string, cursorPos tea.Positio
 	}
 
 	lines := strings.Split(input, "\n")
-	if cursorPos.Y > len(lines) {
+	if cursorPos.Y < 0 || cursorPos.Y >= len(lines) {
 		return Context{}
 	}
 
@@ -88,12 +88,17 @@ func (src *UserMentionSource) InsertSuggestion(
 	replacement := suggestion + " "
 	newLine := string(runes[:contextStart.X]) + replacement + string(runes[contextEnd.X:])
 
-	before := joinLines(lines[:contextStart.Y])
-	if before != "" {
-		before += string('\n')
+	before := ""
+	if contextStart.Y > 0 {
+		before = joinLines(lines[:contextStart.Y]) + string('\n')
 	}
-	newValue := before + newLine + joinLines(lines[contextEnd.Y+1:])
+	after := ""
+	if contextEnd.Y+1 < len(lines) {
+		after = string('\n') + joinLines(lines[contextEnd.Y+1:])
+	}
+	newValue := before + newLine + after
 	newCursorPos.X = contextStart.X + len([]rune(replacement))
+	newCursorPos.Y = contextStart.Y
 	return newValue, newCursorPos
 }
 

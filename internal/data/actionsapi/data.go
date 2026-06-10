@@ -341,6 +341,17 @@ func FetchJobSteps(repo string, jobID string) (NormalizedJobStepsResponse, error
 	}
 	log.Debug("FetchJobSteps request completed", "duration", time.Since(startTime))
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return res, fmt.Errorf(
+			"failed to fetch job steps for job %s: %s %s",
+			jobID,
+			resp.Status,
+			string(body),
+		)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return res, err
@@ -424,9 +435,8 @@ func ReRunJob(repo string, jobId string) error {
 	}
 
 	body := strings.NewReader("")
-	res := struct{}{}
 
-	err = client.Post(fmt.Sprintf("repos/%s/actions/jobs/%s/rerun", repo, jobId), body, res)
+	err = client.Post(fmt.Sprintf("repos/%s/actions/jobs/%s/rerun", repo, jobId), body, nil)
 	return err
 }
 
@@ -578,9 +588,8 @@ func ReRunRun(repo string, runId string) error {
 	}
 
 	body := strings.NewReader("")
-	res := struct{}{}
 
-	err = client.Post(fmt.Sprintf("repos/%s/actions/runs/%s/rerun", repo, runId), body, res)
+	err = client.Post(fmt.Sprintf("repos/%s/actions/runs/%s/rerun", repo, runId), body, nil)
 	return err
 }
 

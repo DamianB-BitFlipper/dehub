@@ -42,7 +42,7 @@ func (m *Model) checkout() (tea.Cmd, error) {
 			"gh",
 			"pr",
 			"checkout",
-			fmt.Sprint(m.GetCurrRow().GetNumber()),
+			fmt.Sprint(prNumber),
 		)
 		return constants.TaskFinishedMsg{TaskId: taskId, Err: err}
 	}), nil

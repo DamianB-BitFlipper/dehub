@@ -170,6 +170,61 @@ func TestMergePRTaskDefaultsToMergeMethod(t *testing.T) {
 	require.Equal(t, []string{"pr", "merge", "42", "-R", "owner/repo", "--merge"}, task.Args)
 }
 
+func TestMergePRTaskRetargetsDependentPRsAfterMergingBeforeDeletingBranch(t *testing.T) {
+	section := SectionIdentifier{Id: 2, Type: "pr"}
+	pr := mockIssue{number: 42, repoName: "owner/repo"}
+
+	task := buildMergePRTask(section, pr, MergePROptions{
+		Method:       MergeMethodSquash,
+		DeleteBranch: true,
+		BranchRef:    "feature/base",
+		RetargetPRs: []BranchRetarget{
+			{Number: 43, RepoName: "owner/repo", BaseRefName: "main"},
+			{Number: 44, RepoName: "owner/repo", BaseRefName: "main"},
+		},
+	})
+
+	require.Empty(t, task.PreArgs)
+	require.Equal(t, []string{
+		"pr", "merge", "42", "-R", "owner/repo", "--squash",
+	}, task.Args)
+	require.Equal(t, [][]string{
+		{"pr", "edit", "43", "-R", "owner/repo", "--base", "main"},
+		{"pr", "edit", "44", "-R", "owner/repo", "--base", "main"},
+		{"api", "--method", "DELETE", "repos/owner/repo/git/refs/heads/feature/base"},
+	}, task.PostArgs)
+}
+
+func TestMergePRTaskDoesNotRetargetWithoutDeleteBranch(t *testing.T) {
+	pr := mockIssue{number: 42, repoName: "owner/repo"}
+
+	task := buildMergePRTask(SectionIdentifier{}, pr, MergePROptions{
+		Method:       MergeMethodSquash,
+		DeleteBranch: false,
+		RetargetPRs:  []BranchRetarget{{Number: 43, RepoName: "owner/repo", BaseRefName: "main"}},
+	})
+
+	require.Empty(t, task.PreArgs)
+	require.Empty(t, task.PostArgs)
+	require.Equal(t, []string{"pr", "merge", "42", "-R", "owner/repo", "--squash"}, task.Args)
+}
+
+func TestMergePRTaskDoesNotDeleteStackedBranchOnAutoMerge(t *testing.T) {
+	pr := mockIssue{number: 42, repoName: "owner/repo"}
+
+	task := buildMergePRTask(SectionIdentifier{}, pr, MergePROptions{
+		Method:       MergeMethodSquash,
+		Auto:         true,
+		DeleteBranch: true,
+		BranchRef:    "feature/base",
+		RetargetPRs:  []BranchRetarget{{Number: 43, RepoName: "owner/repo", BaseRefName: "main"}},
+	})
+
+	require.Empty(t, task.PreArgs)
+	require.Empty(t, task.PostArgs)
+	require.Equal(t, []string{"pr", "merge", "42", "-R", "owner/repo", "--squash", "--auto"}, task.Args)
+}
+
 func TestEditPRTaskConfiguration(t *testing.T) {
 	section := SectionIdentifier{Id: 2, Type: "pr"}
 	pr := mockIssue{number: 42, repoName: "owner/repo"}

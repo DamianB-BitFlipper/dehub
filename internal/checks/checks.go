@@ -97,6 +97,10 @@ func AddStateCount(stats *Stats, state string, count int) {
 		stats.InProgress += count
 	case CategoryFailure:
 		stats.Failed += count
+	case CategoryCancelled:
+		// Stats has no dedicated cancelled bucket; count cancelled checks as
+		// failed so they remain visible instead of being dropped.
+		stats.Failed += count
 	case CategorySkipped:
 		stats.Skipped += count
 	case CategoryNeutral:
